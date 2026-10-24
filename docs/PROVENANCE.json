@@ -1,0 +1,6 @@
+{
+  "source": "trdillman/astro-warp-blender",
+  "base_commit": "e5ebdc970a3633bc61cfe8909e28923f97ca2cfc",
+  "scope": "src/astro_warp solver and data contracts only; no Blender UI reused",
+  "independent_addon_id": "astro_collision_lab"
+}

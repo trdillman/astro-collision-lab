@@ -1,0 +1,5 @@
+# Runtime fingerprints must survive Windows checkouts unchanged.
+extension/** text eol=lf
+# Preserve captured evidence and historical patches byte for byte.
+docs/evidence/** -text
+docs/*.patch -text

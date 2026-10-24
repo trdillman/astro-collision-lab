@@ -1,0 +1,15 @@
+schema_version = "1.0.0"
+id = "astro_collision_lab"
+version = "0.2.1"
+name = "Astro Collision Lab"
+tagline = "Author collisions with primitives and simulate on CUDA"
+maintainer = "Private project"
+type = "add-on"
+tags = ["3D View", "Physics"]
+blender_version_min = "5.1.0"
+platforms = ["windows-x64"]
+license = ["SPDX:LicenseRef-Private-Internal"]
+
+[permissions]
+network = "Download hash-pinned Warp 1.15.0 only when Install is selected"
+files = "Write owned kernel caches, warmup requests, and measurement reports"

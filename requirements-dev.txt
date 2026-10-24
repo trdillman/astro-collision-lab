@@ -1,0 +1,4 @@
+# CPU contract tests. Blender and the pinned Warp runtime are separate native gates.
+numpy==2.3.5
+pytest==9.1.1
+ruff==0.17.2
