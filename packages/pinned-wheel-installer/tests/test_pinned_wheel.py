@@ -107,3 +107,27 @@ def test_isolated_blender_command(tmp_path):
     assert argv[-2:] == ["--", "out"]
     for key in ("RESOURCES", "CONFIG", "EXTENSIONS", "SCRIPTS", "DATAFILES"):
         assert env["BLENDER_USER_" + key].startswith(str(tmp_path))
+
+
+def test_data_purelib_layout_rejected():
+    data, sha = make_wheel({"demo-1.2.3.data/purelib/demo/__init__.py": ""})
+    with pytest.raises(pw.WheelError, match="purelib"):
+        pw.verify_archive(data, sha)
+
+
+def test_activate_rejects_module_loaded_from_elsewhere(tmp_path, monkeypatch):
+    elsewhere = tmp_path / "elsewhere"
+    (elsewhere / "demo").mkdir(parents=True)
+    (elsewhere / "demo" / "__init__.py").write_text("__version__ = '1.2.3'\n")
+    private = tmp_path / "private"
+    data, sha = make_wheel({"demo/__init__.py": "__version__ = '1.2.3'\n"})
+    pw.install(pin(sha), private, data=data)
+    monkeypatch.setattr(sys, "path", [str(elsewhere), *sys.path])
+    sys.modules.pop("demo", None)
+    try:
+        __import__("demo")
+        assert pw.activate(pin(sha), private) is False
+        with pytest.raises(pw.WheelError, match="not from"):
+            pw.activate(pin(sha), private, required=True)
+    finally:
+        sys.modules.pop("demo", None)

@@ -6,7 +6,8 @@ arrays. No particle data is copied back to the CPU. Both files are kept byte-ide
 the Astro Collision Lab add-on (see ``tools/sync_packages.py``).
 
 Importing this package is safe anywhere; creating a ``CudaGLBatch`` needs Windows, a CUDA
-GPU and a current OpenGL 3.3+ context on the calling thread.
+GPU and a current OpenGL 4.5 context (or 4.0+ with
+GL_ARB_clip_control) on the calling thread.
 """
 from . import cuda_gl, device_appearance
 from .cuda_gl import CudaGLBatch, current_context_key

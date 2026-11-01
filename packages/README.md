@@ -6,7 +6,7 @@ them needs Blender. None depends on the add-on or on its vendored solver.
 
 | Package | Import | What it gives you | Needs |
 |---|---|---|---|
-| [astro-initial-conditions](astro-initial-conditions/) | `astro_ics` | Stable galaxies (Plummer spheres, exponential disks, halos), the Moon-impact and two-galaxy presets, and stability checks, as NumPy arrays | NumPy 2 |
+| [astro-initial-conditions](astro-initial-conditions/) | `astro_ics` | Galaxy setups built to start in equilibrium (Plummer spheres, exponential disks, halos; disks are candidates to confirm with `assess`), the Moon-impact and two-galaxy presets, and stability checks, as NumPy arrays | NumPy 2 |
 | [warp-cuda-gl](warp-cuda-gl/) | `warp_cuda_gl` | Zero-copy particle drawing: Warp writes straight into an OpenGL buffer, colour/size by speed, density, material and more | Warp; Windows + CUDA + OpenGL to draw |
 | [pinned-wheel-installer](pinned-wheel-installer/) | `pinned_wheel` | Install one exact, hash-checked wheel into a private folder without pip, including from a Blender add-on | Standard library |
 

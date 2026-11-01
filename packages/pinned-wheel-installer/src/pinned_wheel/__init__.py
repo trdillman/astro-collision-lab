@@ -59,6 +59,10 @@ def verify_archive(data: bytes, sha256: str) -> zipfile.ZipFile:
         path = pathlib.PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name:
             raise WheelError("unsafe archive entry: " + name)
+        parts = path.parts
+        if len(parts) > 1 and parts[0].endswith(".data") and parts[1] in ("purelib", "platlib"):
+            # Plain extraction would leave the package under *.data/ where it cannot import.
+            raise WheelError("wheels with .data/purelib or .data/platlib files are not supported")
     return archive
 
 
@@ -91,10 +95,10 @@ def install(wheel: PinnedWheel, destination, *, data: bytes | None = None, index
 
 
 def activate(wheel: PinnedWheel, directory, *, required: bool = False) -> bool:
-    """Put ``directory`` on ``sys.path`` and check the importable module is the pinned version.
+    """Put ``directory`` on ``sys.path`` and check the module imports from there at the pinned version.
 
-    Returns False (or raises ``WheelError`` when ``required``) if the module is missing or a
-    different version was already imported by something else in the process.
+    Returns False (or raises ``WheelError`` when ``required``) if the module is missing, was
+    already imported from somewhere else, or is a different version.
     """
     folder = pathlib.Path(directory)
     if (folder / wheel.module / "__init__.py").exists() and str(folder) not in sys.path:
@@ -104,6 +108,16 @@ def activate(wheel: PinnedWheel, directory, *, required: bool = False) -> bool:
     except ImportError:
         if required:
             raise WheelError(f"install {wheel.project} {wheel.version} first") from None
+        return False
+    origin = getattr(module, "__file__", None)
+    try:
+        inside = origin is not None and pathlib.Path(origin).resolve().is_relative_to(folder.resolve())
+    except OSError:
+        inside = False
+    if not inside:
+        if required:
+            raise WheelError(f"{wheel.module} is loaded from {origin}, not from {folder}. "
+                             "Use a clean process or profile.")
         return False
     found = getattr(module, "__version__", None)
     if found != wheel.version:
