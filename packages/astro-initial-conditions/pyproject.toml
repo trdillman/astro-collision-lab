@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro-initial-conditions"
+version = "0.1.0"
+description = "Stable galaxy (Plummer sphere, exponential disk, halo) and planetary-impact starting setups for N-body and SPH codes."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "LicenseRef-Private-Internal" }
+authors = [{ name = "Tyler Dillman" }]
+dependencies = ["numpy>=2.0"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.urls]
+Source = "https://github.com/trdillman/astro-collision-lab/tree/main/packages/astro-initial-conditions"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+astro_ics = ["py.typed"]
+
+[tool.ruff]
+line-length = 110
+# Byte-identical copies of the add-on's modules (tools/sync_packages.py); linted there.
+extend-exclude = ["src/astro_ics/galaxy_models.py", "src/astro_ics/preset_specs.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]

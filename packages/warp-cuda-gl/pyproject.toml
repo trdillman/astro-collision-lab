@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "warp-cuda-gl"
+version = "0.1.0"
+description = "Zero-copy particle display: NVIDIA Warp kernels write straight into a CUDA-registered OpenGL buffer drawn as instanced billboards."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "LicenseRef-Private-Internal" }
+authors = [{ name = "Tyler Dillman" }]
+dependencies = ["numpy>=1.26"]
+
+[project.optional-dependencies]
+# Tested with Warp 1.15.0 (the add-on's pin). Install the Warp version your project uses.
+warp = ["warp-lang>=1.15"]
+test = ["pytest>=8", "warp-lang>=1.15"]
+
+[project.urls]
+Source = "https://github.com/trdillman/astro-collision-lab/tree/main/packages/warp-cuda-gl"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+warp_cuda_gl = ["py.typed"]
+
+[tool.ruff]
+line-length = 110
+# Byte-identical copies of the add-on's modules (tools/sync_packages.py); linted there.
+extend-exclude = ["src/warp_cuda_gl/cuda_gl.py", "src/warp_cuda_gl/device_appearance.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
