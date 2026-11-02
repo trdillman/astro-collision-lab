@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pinned-wheel-installer"
+version = "0.1.0"
+description = "Install one exact, SHA-256-checked wheel into a private folder without pip, for Blender add-ons and other embedded-Python apps."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "LicenseRef-Private-Internal" }
+authors = [{ name = "Tyler Dillman" }]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.urls]
+Source = "https://github.com/trdillman/astro-collision-lab/tree/main/packages/pinned-wheel-installer"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pinned_wheel = ["py.typed"]
+
+[tool.ruff]
+line-length = 110
+# Byte-identical copies of the add-on's modules (tools/sync_packages.py); linted there.
+extend-exclude = []
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
