@@ -7,8 +7,9 @@ def register():
     global _REGISTERED
     if _REGISTERED:
         return
-    from . import runtime, ui
+    from . import dependencies, runtime, ui
 
+    dependencies.register()
     ui.register()
     runtime.register_handlers()
     from . import authoring
@@ -18,8 +19,9 @@ def register():
 
 def unregister():
     global _REGISTERED
-    from . import runtime, ui
+    from . import dependencies, runtime, ui
 
+    dependencies.unregister()
     from . import authoring
     authoring.unregister()
     runtime.shutdown()

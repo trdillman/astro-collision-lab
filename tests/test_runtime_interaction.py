@@ -63,7 +63,10 @@ class RuntimeTests(unittest.TestCase):
     def test_start_changes_intent_while_worker_prepares(self):
         self.c.scene=self.scene;self.c.intent='PAUSE';self.c.warming=Mock()
         self.c.pending=(self.scene,self.config,self.bodies,(),False,Path('marker'),Path('owned'))
-        self.r.start(self.context)
+        self.c.request_key='existing-kernel-request'
+        self.c.pending_identity={'runtime': ('test-runtime',)}
+        with patch.object(self.r,'kernel_identity',return_value={'request_id':'existing-kernel-request'}):
+            self.r.start(self.context)
         self.assertEqual(self.c.intent,'PLAY')
         self.assertTrue(self.c.pending[4])
     def test_pause_cancels_step_and_pending_play(self):

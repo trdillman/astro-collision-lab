@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "astro_collision_lab"
-version = "0.2.1"
+version = "0.2.2"
 name = "Astro Collision Lab"
 tagline = "Author collisions with primitives and simulate on CUDA"
 maintainer = "Private project"
@@ -11,5 +11,5 @@ platforms = ["windows-x64"]
 license = ["SPDX:LicenseRef-Private-Internal"]
 
 [permissions]
-network = "Download hash-pinned Warp 1.15.0 only when Install is selected"
-files = "Write owned kernel caches, warmup requests, and measurement reports"
+network = "Download hash-pinned Warp 1.18.0 only when Install is selected"
+files = "Write owned kernel caches, warmup files and measurement reports"

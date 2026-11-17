@@ -310,7 +310,7 @@ def flush():
                 if owned and (controller.signature != signature or replaced):
                     controller.reset(preserve_intent=True)
                 accept_snapshot(scene, config, bodies, objects)
-                scene.acl_settings.authoring_status = 'Preview - equilibrium not validated' if config.mode == 'GALAXY' else 'Preview'
+                scene.acl_settings.authoring_status = 'Preview - Galaxy isolation not validated for this model' if config.mode == 'GALAXY' else 'Preview'
                 if owned and controller.intent != 'STOPPED':
                     _RESTARTS[pointer] = (scene, time.monotonic() + .35)
                     controller.message = 'Preview; waiting for edits to settle'

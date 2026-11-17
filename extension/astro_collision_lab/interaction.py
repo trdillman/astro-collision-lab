@@ -1,8 +1,10 @@
-"""Pure authored-revision and preparation-cache contracts.
+"""Pure authored-revision, kernel-cache and validation-cache contracts.
 
 Signatures describe ordered sources, not Blender names. Only equilibrium
 qualification removes each assembly's global position and bulk velocity;
 orientation, relative component state, numerical settings and support remain.
+Kernel receipts describe code/runtime/mode only and can be reused after authoring
+edits. Scientific receipts retain the exact centered model and all solver values.
 No helper imports Blender, Warp, or initializes a device.
 """
 
@@ -176,7 +178,7 @@ def runtime_identity(wp, app, module_name):
 
 
 def warmup_identity(*, signature, code_fingerprint, runtime):
-    """Content-bound request identity copied into worker ready receipts.
+    """Content-bound identity copied into worker receipts.
 
     Runtime is explicit (e.g. Blender, Warp, CUDA and device identity), supplied
     by the caller. Request IDs detect stale/mismatched content, not malicious
@@ -192,6 +194,24 @@ def warmup_identity(*, signature, code_fingerprint, runtime):
                     code_fingerprint=code_fingerprint, runtime=json.loads(_json(runtime)))
     identity["request_id"] = hashlib.sha256(_json(identity).encode("utf-8")).hexdigest()
     return identity
+
+
+def kernel_signature(config: SimulationConfig) -> str:
+    """Identity of compiled kernel families, independent of authored values.
+
+    The current Warp calls receive physical parameters as runtime values. The
+    mode and precision select distinct kernel families; code and device identity
+    are included separately by ``kernel_identity``.
+    """
+    config.validate()
+    return _json({"purpose": "kernel-readiness-v1", "mode": config.mode.upper(),
+                  "precision": config.precision})
+
+
+def kernel_identity(config: SimulationConfig, *, code_fingerprint, runtime):
+    """Receipt key for the bounded mode probe, reusable across authored edits."""
+    return warmup_identity(signature=kernel_signature(config),
+                           code_fingerprint=code_fingerprint, runtime=runtime)
 
 
 def ready_marker(identity):

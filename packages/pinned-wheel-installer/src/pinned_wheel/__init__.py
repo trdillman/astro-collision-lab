@@ -55,9 +55,12 @@ def verify_archive(data: bytes, sha256: str) -> zipfile.ZipFile:
     if hashlib.sha256(data).hexdigest() != sha256.lower():
         raise WheelError("wheel hash mismatch")
     archive = zipfile.ZipFile(io.BytesIO(data))
-    for name in archive.namelist():
+    for entry in archive.infolist():
+        # ZipInfo normalizes separators on Windows and truncates NUL bytes.
+        # Validate the original untrusted entry, before that normalization.
+        name = entry.orig_filename
         path = pathlib.PurePosixPath(name)
-        if path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name:
+        if path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name or "\x00" in name:
             raise WheelError("unsafe archive entry: " + name)
         parts = path.parts
         if len(parts) > 1 and parts[0].endswith(".data") and parts[1] in ("purelib", "platlib"):

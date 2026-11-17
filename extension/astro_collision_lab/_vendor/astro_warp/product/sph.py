@@ -471,7 +471,7 @@ class NeighborRuntime:
     def build_grid(self) -> None:
         """Rebuild the grid from the current positions, issued by the host, never captured.
 
-        ``wp.HashGrid.build`` must not be recorded into a CUDA graph (ADR 0096). Warp 1.15.0
+        ``wp.HashGrid.build`` must not be recorded into a CUDA graph (ADR 0096). Warp 1.18.0
         fills one function-local ``static`` descriptor per dtype and copies it to the device,
         and sorts through a temporary buffer cached per stream and freed when a larger sort
         runs there. A graph that captured the build replays the copy from whichever grid of

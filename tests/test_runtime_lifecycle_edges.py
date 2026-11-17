@@ -93,7 +93,7 @@ class RuntimeLifecycleEdges(unittest.TestCase):
         dependencies = types.ModuleType("astro_collision_lab.dependencies")
         dependencies.activate = Mock()
         warp = types.ModuleType("warp")
-        warp.__version__ = "1.15.0"
+        warp.__version__ = "1.18.0"
         warp.__file__ = str(self.owned / "warp" / "__init__.py")
         warp.config = types.SimpleNamespace()
         warp.get_device = lambda _device: types.SimpleNamespace(name="Test CUDA", arch=89)
@@ -108,6 +108,7 @@ class RuntimeLifecycleEdges(unittest.TestCase):
         sys.modules.pop("astro_collision_lab.runtime", None)
         self.runtime = importlib.import_module("astro_collision_lab.runtime")
         self.runtime.viewport = self.viewport
+        self.runtime.code_fingerprint = lambda _package: "test-package-fingerprint"
         self.controller = self.runtime.controller
         self.scene = Scene()
         self.context = types.SimpleNamespace(scene=self.scene)
@@ -116,10 +117,10 @@ class RuntimeLifecycleEdges(unittest.TestCase):
 
         self.config = SimulationConfig(particle_count=10)
         self.bodies = (BodySpec("Source", particle_count=10),)
-        from astro_collision_lab.interaction import ready_marker, warmup_identity
+        from astro_collision_lab.interaction import ready_marker, kernel_identity
 
-        self.identity = warmup_identity(
-            signature=self.runtime._signature(self.config, self.bodies),
+        self.identity = kernel_identity(
+            self.config,
             code_fingerprint="test-package-fingerprint",
             runtime=("Blender", (5, 1, 0), "Warp", "1.15.0", "test-device"),
         )
@@ -171,6 +172,49 @@ class RuntimeLifecycleEdges(unittest.TestCase):
         controller.revision = controller.presented_revision = 3
         controller.intent = "PLAY"
         controller.playing = True
+
+    def test_failed_worker_displays_owned_failure_and_keeps_scene_for_retry(self):
+        self.prepare_worker(returncode=1)
+        (self.owned / 'failure.json').write_text(json.dumps({
+            'schema': 1,
+            'request_id': self.identity['request_id'],
+            'reason': 'Galaxy B: disk height drift 154.9% exceeds 10%',
+        }))
+        self.runtime._tick()
+        self.assertIn('154.9%', self.controller.error)
+        self.assertIs(self.controller.scene, self.scene)
+        self.assertIn('Start', self.controller.error)
+        with patch.object(self.controller, 'begin') as begin:
+            self.runtime.start(self.context)
+        begin.assert_called_once()
+
+    def test_stale_failed_worker_does_not_stop_new_authored_request(self):
+        from dataclasses import replace
+        self.prepare_worker(returncode=1)
+        newer = (replace(self.bodies[0], mass=3),)
+        with patch.object(self.runtime, 'authored_scene', return_value=(self.config,newer,())), patch.object(self.controller,'begin') as begin:
+            self.runtime._tick()
+        begin.assert_called_once()
+        self.assertEqual(self.controller.error, '')
+
+    def test_stale_success_does_not_initialize_old_inputs(self):
+        from dataclasses import replace
+        self.prepare_worker(returncode=0,receipt=self.receipt)
+        newer=(replace(self.bodies[0],mass=3),)
+        with patch.object(self.runtime,'authored_scene',return_value=(self.config,newer,())), patch.object(self.controller,'begin') as begin, patch.object(self.controller,'_initialize') as initialize:
+            self.runtime._tick()
+        begin.assert_called_once()
+        initialize.assert_not_called()
+        self.assertEqual(newer[0].mass,3)
+        self.assertEqual(self.bodies[0].mass,1)
+
+    def test_malformed_or_foreign_failure_keeps_log_fallback(self):
+        for content in ('{', json.dumps({'request_id':'foreign','reason':'WRONG'})):
+            self.prepare_worker(returncode=1)
+            (self.owned/'failure.json').write_text(content)
+            self.runtime._tick()
+            self.assertIn('worker.log',self.controller.error)
+            self.assertNotIn('WRONG',self.controller.error)
 
     def test_step_during_play_warmup_runs_once_then_stays_paused(self):
         worker, _marker = self.prepare_worker(receipt=self.receipt)
