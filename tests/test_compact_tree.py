@@ -94,21 +94,28 @@ def test_compact_sort_reuses_flags_and_maps_only_reachable_prefixes(depth, order
         rt.close()
 
 
-@pytest.mark.parametrize('free_nodes,expected_capacity', [(110, 101), (100, None)])
+@pytest.mark.parametrize('free_bytes,expected_capacity,packed', [
+    (110*128, 101, True), (101*124, 101, False), (100*124, None, False),
+])
 def test_growth_uses_exact_requirement_when_only_spare_headroom_exceeds_gpu_budget(
-        free_nodes, expected_capacity):
+        free_bytes, expected_capacity, packed):
     from types import SimpleNamespace
 
     allocations = []
     old_array = SimpleNamespace(dtype='float32')
 
     class FakeWarp:
+        vec4 = object()
+
         def get_device(self, device):
             return SimpleNamespace(is_cuda=True,
-                                   free_memory=64*1024*1024 + free_nodes*124)
+                                   free_memory=64*1024*1024 + free_bytes)
         def zeros(self, count, *, dtype, device):
             allocations.append(count)
-            return SimpleNamespace(dtype=dtype)
+            return SimpleNamespace(dtype=dtype, ptr=1024)
+
+        def array(self, **view):
+            return SimpleNamespace(**view)
 
     runtime = CompactBarnesHutRuntime(SimpleNamespace(device='fake:0'), config())
     runtime._wp = FakeWarp()
@@ -116,6 +123,7 @@ def test_growth_uses_exact_requirement_when_only_spare_headroom_exceeds_gpu_budg
     runtime._compact_growths = 1
     runtime._arrays = {name: old_array for name in [
         'node_mass', 'walk_links', 'walk_cells', 'walk_mass_diagonal', 'walk_off_diagonal']}
+    runtime._arrays['walk_storage'] = old_array
     if expected_capacity is None:
         with pytest.raises(MemoryError, match='additional GPU bytes'):
             runtime._grow_node_pool(101)
@@ -125,7 +133,15 @@ def test_growth_uses_exact_requirement_when_only_spare_headroom_exceeds_gpu_budg
     else:
         runtime._grow_node_pool(101)
         assert runtime.total_nodes == expected_capacity
-        assert allocations and set(allocations) == {expected_capacity}
+        if not packed:
+            assert 'walk_storage' not in runtime._arrays
+            assert allocations == [expected_capacity] * 5
+            return
+        assert allocations == [expected_capacity, (expected_capacity, 4)]
+        owner = runtime._arrays['walk_storage']
+        for index, name in enumerate(('walk_links', 'walk_cells', 'walk_mass_diagonal', 'walk_off_diagonal')):
+            view = runtime._arrays[name]
+            assert (view.ptr, view.strides, view.shape) == (owner.ptr + 16*index, (64,), (expected_capacity,))
 
 
 @pytest.mark.parametrize('count,depth', [(8, 16), (32, 9), (32, 16)])

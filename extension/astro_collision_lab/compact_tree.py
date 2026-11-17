@@ -105,7 +105,8 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
         scalar_bytes = 8 if self.config.precision == Precision.FLOAT64 else 4
         return dict(storage='COMPACT', actual_nodes=self._compact_actual,
                     allocated_nodes=self._total_nodes, allocation_growths=self._compact_growths,
-                    node_storage_bytes=self._total_nodes * (40 + 21 * scalar_bytes),
+                    node_storage_bytes=self._total_nodes * (40 + 21 * scalar_bytes +
+                        (4 if 'walk_storage' in self._arrays else 0)),
                     submission='eager', occupancy_readback_bytes=4)
 
     def _grow_node_pool(self, required):
@@ -117,23 +118,40 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
         wp = self._require_wp()
         arrays = self._arrays
         names = [name for name in arrays if name.startswith('node_') and name != 'node_cursor']
-        names += ['walk_links', 'walk_cells', 'walk_mass_diagonal', 'walk_off_diagonal']
+        fields = ('walk_links', 'walk_cells', 'walk_mass_diagonal', 'walk_off_diagonal')
+        device = self.device_context.device
+        packed = self.config.precision == Precision.FLOAT32 and wp.get_device(device).is_cuda
         scalar_bytes = 8 if self.config.precision == Precision.FLOAT64 else 4
-        bytes_per_node = 40 + 21 * scalar_bytes
+        # Group four aligned fields per cell. The final vec3 has one padding word.
+        separate_bytes = 40 + 21 * scalar_bytes
+        bytes_per_node = separate_bytes + (4 if packed else 0)
         try:
             self._preflight_device_bytes(target * bytes_per_node)
         except MemoryError:
-            if target == required:
-                raise
-            # Spare growth capacity is optional. Preserve the same reserve and
-            # overlap accounting while admitting the exact live topology.
+            # Drop spare capacity first, then the optional alignment padding.
             target = required
-            self._preflight_device_bytes(target * bytes_per_node)
+            if packed:
+                try:
+                    self._preflight_device_bytes(target * bytes_per_node)
+                except MemoryError:
+                    packed = False
+            if not packed:
+                self._preflight_device_bytes(target * separate_bytes)
+        if not packed:
+            names.extend(fields)
         # Allocate transactionally. A failed allocation leaves every existing pointer
         # intact; no particle state is reallocated or copied during topology growth.
         replacements = {name: wp.zeros(target, dtype=arrays[name].dtype,
                                       device=self.device_context.device) for name in names}
+        if packed:
+            storage = wp.zeros((target, 4), dtype=wp.vec4, device=device)
+            replacements['walk_storage'] = storage
+            for index, name in enumerate(fields):
+                replacements[name] = wp.array(ptr=storage.ptr + index * 16, dtype=arrays[name].dtype,
+                                              shape=(target,), strides=(64,), device=device)
         arrays.update(replacements)
+        if not packed:
+            arrays.pop('walk_storage', None)
         self._total_nodes = target
         self._compact_growths += 1
         self._graphs.clear()

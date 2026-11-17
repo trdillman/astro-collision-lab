@@ -79,6 +79,32 @@ def opening_cutoff(reach: float, theta: float) -> float:
     ...
 
 
+# All four-component walk arrays have aligned 16-byte fields. A vector load
+# fetches the whole field together and respects the compact layout stride.
+@wp.func_native('''
+#ifdef __CUDA_ARCH__
+const int4 v = __ldg(reinterpret_cast<const int4*>(wp::address(a, i)));
+return wp::vec_t<4, int>(v.x, v.y, v.z, v.w);
+#else
+return *wp::address(a, i);
+#endif
+''')
+def read_int4(a: wp.array(dtype=wp.vec4i), i: int) -> wp.vec4i:
+    ...
+
+
+@wp.func_native('''
+#ifdef __CUDA_ARCH__
+const float4 v = __ldg(reinterpret_cast<const float4*>(wp::address(a, i)));
+return wp::vec_t<4, float>(v.x, v.y, v.z, v.w);
+#else
+return *wp::address(a, i);
+#endif
+''')
+def read_float4(a: wp.array(dtype=quad), i: int) -> quad:
+    ...
+
+
 @wp.kernel
 def tree_acceleration_walk(
     sorted_indices: wp.array(dtype=wp.int32),
@@ -106,7 +132,7 @@ def tree_acceleration_walk(
     if i < 0:
         return
     total = wp.min(walk_offsets[count], walk_capacity)
-    body = walk_bodies[slot]
+    body = read_float4(walk_bodies, slot)
     p = vector(body[0], body[1], body[2])
     a = vector()
     interactions = wp.int32(0)
@@ -123,7 +149,7 @@ def tree_acceleration_walk(
             break
         if entry != shared_entry:
             continue
-        link = walk_links[entry]
+        link = read_int4(walk_links, entry)
         start = link[0]
         end = link[1]
         skip = link[2]
@@ -143,7 +169,7 @@ def tree_acceleration_walk(
             cursor = start
             while cursor <= end:
                 if cursor != slot:
-                    source = walk_bodies[cursor]
+                    source = read_float4(walk_bodies, cursor)
                     delta = vector(source[0], source[1], source[2]) - p
                     dist2 = wp.dot(delta, delta) + softening * softening
                     inv = inverse_root(dist2)
@@ -152,12 +178,12 @@ def tree_acceleration_walk(
                 cursor += 1
             entry = skip
             continue
-        cell = walk_cells[entry]
+        cell = read_float4(walk_cells, entry)
         r = vector(cell[0], cell[1], cell[2]) - p
         d2 = wp.dot(r, r) + softening * softening
         contains_target = slot >= start and slot <= end
         if (not contains_target) and d2 > cell[3]:
-            moments = walk_mass_diagonal[entry]
+            moments = read_float4(walk_mass_diagonal, entry)
             mass = moments[0]
             inv = inverse_root(d2)
             a += r * (gravitational_constant * mass * inv * inv * inv)
