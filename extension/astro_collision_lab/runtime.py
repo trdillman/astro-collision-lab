@@ -160,6 +160,7 @@ class Controller:
         self.error = ""
         self.revision = 0
         self.presented_revision = -1
+        self._advance_in_flight = False
         self.run_id = ""
         self.measurement_sync = False
         self.measurements = []
@@ -218,6 +219,7 @@ class Controller:
         viewport.attach(self)
 
     def begin(self, context, *, play=True):
+        self.finish_advance()
         if not play:
             self._release_playback_timer()
         scene = context.scene
@@ -394,10 +396,26 @@ class Controller:
     def advance(self):
         if self.simulation is None:
             raise RuntimeError("Initialize the simulation first")
+        if self._advance_in_flight:
+            return
         self.step_started = time.perf_counter()
-        self.simulation.step()
-        self.revision += 1
+        if self.playing and getattr(self.simulation, "supports_queued_step", False) is True:
+            self.simulation.queue_viewport_step()
+            self._advance_in_flight = True
+        else:
+            self.simulation.step()
+            self.revision += 1
         viewport.request_redraw()
+
+    def finish_advance(self):
+        if self._advance_in_flight:
+            self._advance_in_flight = False
+            try:
+                self.simulation.finish_viewport_step()
+            except Exception as error:
+                self.fail(error)
+                raise
+            self.revision += 1
 
     def _wake_for_playback(self, window):
         # A window event wakes Blender's event loop between GPU presentations.
@@ -428,6 +446,7 @@ class Controller:
                 "revision": revision, "active_count": self.simulation.count, "displayed_count": count,
                 "physical_time": self.simulation.physical_time,
                 "solver_ms": self.simulation.stats.get("last_step_ms"),
+                "solver_timing": self.simulation.stats.get("step_timing", "synchronous"),
                 "pack_ms": (packed-draw_start)*1000, "draw_ms": (finished-packed)*1000,
                 "frame_interval_ms": interval,
                 "end_to_end_ms": None if self.step_started is None else (finished-self.step_started)*1000,
@@ -441,6 +460,7 @@ class Controller:
 
     def reset(self, *, preserve_intent=False):
         self._release_playback_timer()
+        self._advance_in_flight = False
         scene, intent = self.scene, self.intent
         self.playing = False
         if self.warming is not None:
@@ -625,6 +645,7 @@ def start(context):
 
 def pause(context):
     controller._release_playback_timer()
+    controller.finish_advance()
     editor = _editor()
     if editor is not None:
         editor.pause_restart(None)

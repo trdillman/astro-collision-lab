@@ -312,6 +312,7 @@ class AstroCollisionSimulation:
         self._radius_writer = None
         self._health_guard = None
         self._step_failure: str | None = None
+        self._queued_at: float | None = None
 
     def initialize(self, bodies: Sequence[BodySpec]):
         try:
@@ -414,10 +415,48 @@ class AstroCollisionSimulation:
         self._raise_if_step_failed()
         if dt is not None and not math.isclose(dt, self.config.dt, rel_tol=1e-9, abs_tol=1e-12):
             raise ValueError("dt changed: reinitialize instead of replaying a stale captured graph")
-        started = time.perf_counter()
+        self.finish_viewport_step()
+        return self._validated_step(self.runtime.step, time.perf_counter())
+
+    @property
+    def supports_queued_step(self):
+        return (self.config.mode.upper() == "GALAXY" and self.config.tree_storage == "STRIDED"
+                and self.config.substeps == 1)
+
+    def queue_viewport_step(self):
+        """Keep just one KDK substep in flight while Blender prepares the redraw."""
+        self._raise_if_step_failed()
+        if self.runtime is None or not self.supports_queued_step or self._queued_at is not None:
+            raise RuntimeError("cannot queue a viewport step in the current state")
+        self._queued_at = time.perf_counter()
+        try:
+            self.runtime.begin_frame()
+            self.runtime.enqueue_frame_substep()
+        except BaseException as error:
+            self._invalidate_step(error)
+            raise
+
+    def finish_viewport_step(self):
+        self._raise_if_step_failed()
+        if self._queued_at is not None:
+            started = self._queued_at
+
+            def finish():
+                self.runtime.finish_frame_substep(started)
+                self.runtime.finish_frame()
+                self.runtime.last_step_ms = (time.perf_counter() - started) * 1000
+
+            self._validated_step(finish, started)
+            self._queued_at = None
+
+    def _invalidate_step(self, error):
+        self._step_failure = f"{type(error).__name__}: {error}"
+        self._channels = {}
+
+    def _validated_step(self, advance, started):
         frame = self._frames + 1
         try:
-            self.runtime.step()
+            advance()
             if self.config.mode.upper() == "IMPACT":
                 self._check_impact_health()
             physical_time = (
@@ -433,14 +472,14 @@ class AstroCollisionSimulation:
         except BaseException as error:
             # Vendor channels may already have changed in place. Neither a new
             # display request nor another step may expose that failed state.
-            self._step_failure = f"{type(error).__name__}: {error}"
-            self._channels = {}
+            self._invalidate_step(error)
             raise
         self._frames = frame
         self.physical_time = physical_time
         self.stats.update(
             {
                 "last_step_ms": (time.perf_counter() - started) * 1000,
+                "step_timing": "queue_to_validation" if self._queued_at is not None else "synchronous",
                 "solver_reported_ms": solver_ms,
                 "frame": frame,
                 "physical_time": self.physical_time,
@@ -486,7 +525,7 @@ class AstroCollisionSimulation:
     def display_channels(self) -> Mapping[str, Any]:
         if self.runtime is None:
             raise RuntimeError("initialize the simulation before requesting device channels")
-        self._raise_if_step_failed()
+        self.finish_viewport_step()
         return self._channels
 
     def authoring_metadata(self) -> Mapping[str, Any]:
@@ -498,8 +537,13 @@ class AstroCollisionSimulation:
     def close(self):
         try:
             if self.runtime is not None:
-                self.runtime.close()
+                try:
+                    if self._queued_at is not None:
+                        self.device_context.wp.synchronize_device(self.device_context.device)
+                finally:
+                    self.runtime.close()
         finally:
+            self._queued_at = None
             if self.device_context is not None:
                 self.device_context.close()
             self.runtime = None

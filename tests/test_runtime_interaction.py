@@ -88,6 +88,29 @@ class RuntimeTests(unittest.TestCase):
         self.live();self.editor.is_dirty=lambda s:True
         self.r._tick()
         self.c.simulation.step.assert_not_called()
+    def test_queued_playback_publishes_once_after_completion(self):
+        self.live()
+        self.c.simulation.supports_queued_step = True
+        self.r._tick()
+        self.r._tick()
+        self.c.simulation.queue_viewport_step.assert_called_once()
+        self.assertEqual(self.c.revision, 3)
+        self.r.pause(self.context)
+        self.c.finish_advance()
+        self.c.simulation.finish_viewport_step.assert_called_once()
+        self.assertEqual(self.c.revision, 4)
+        self.assertFalse(self.c.playing)
+
+    def test_queued_diagnostic_failure_stops_before_presentation(self):
+        self.live()
+        self.c.simulation.supports_queued_step = True
+        self.r._tick()
+        self.c.simulation.finish_viewport_step.side_effect = RuntimeError("tree overflow")
+        with self.assertRaisesRegex(RuntimeError, "tree overflow"):
+            self.c.finish_advance()
+        self.assertEqual(self.c.revision, 3)
+        self.assertTrue(self.c.failed)
+        self.assertFalse(self.c.playing)
     def test_playback_wakes_only_one_window_and_pause_releases_it(self):
         self.live()
         first, second = object(), object()

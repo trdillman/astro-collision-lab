@@ -719,11 +719,14 @@ class BarnesHutRuntime:
     def advance_frame_substep(self) -> None:
         """Execute, synchronize, and validate exactly one captured tree/KDK substep."""
 
+        started = self.enqueue_frame_substep()
+        self.finish_frame_substep(started)
+
+    def enqueue_frame_substep(self) -> float:
+        """Submit one substep. Its diagnostics must pass before consuming the state."""
         if not self._arrays:
             raise DeviceRequirementError("BarnesHutRuntime has no loaded bindings")
         self._refuse_gravity_service()
-        wp = self._require_wp()
-        device = self.device_context.device
         start = self._frame_primitive_started_at or time.perf_counter()
         self._frame_primitive_started_at = None
         opens, closes = self._two_rate_position()
@@ -735,7 +738,10 @@ class BarnesHutRuntime:
         else:
             self._submit("substep", self._record_substep)
         self._flag_nonfinite(closes)
-        wp.synchronize_device(device)
+        return start
+
+    def finish_frame_substep(self, start: float) -> None:
+        self._require_wp().synchronize_device(self.device_context.device)
         diag = self._arrays["diag"].numpy()
         collision_totals = self._arrays["idiag_totals"].numpy()
         self.last_solver_primitive_ms = (time.perf_counter() - start) * 1000.0

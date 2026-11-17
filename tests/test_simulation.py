@@ -1,5 +1,6 @@
 import importlib.util
 import unittest
+from unittest.mock import Mock
 
 
 class StandaloneSimulationContracts(unittest.TestCase):
@@ -61,6 +62,36 @@ class StandaloneSimulationContracts(unittest.TestCase):
         sim.runtime=BoundaryRuntime()
         sim.step()
         self.assertAlmostEqual(sim.physical_time,sim.config.dt)
+
+    def test_queued_frame_is_validated_once_before_channel_access(self):
+        sim = self.api().AstroCollisionSimulation()
+        sim.runtime = Mock()
+        sim.runtime.display_channels.return_value = {"positions": object()}
+        sim.queue_viewport_step()
+        with self.assertRaisesRegex(RuntimeError, "cannot queue"):
+            sim.queue_viewport_step()
+        self.assertEqual(sim.physical_time, 0)
+        self.assertIs(sim.display_channels()["positions"], sim.runtime.display_channels.return_value["positions"])
+        sim.finish_viewport_step()
+        sim.runtime.finish_frame_substep.assert_called_once()
+        sim.runtime.finish_frame.assert_called_once()
+        self.assertEqual(sim.physical_time, sim.config.dt)
+
+    def test_failed_queued_frame_hides_channels_and_drains_on_close(self):
+        sim = self.api().AstroCollisionSimulation()
+        runtime = sim.runtime = Mock()
+        device = sim.device_context = Mock()
+        runtime.finish_frame_substep.side_effect = RuntimeError("non-finite acceleration")
+        sim.queue_viewport_step()
+        with self.assertRaisesRegex(RuntimeError, "non-finite"):
+            sim.display_channels()
+        with self.assertRaisesRegex(RuntimeError, "reset"):
+            sim.step()
+        runtime.display_channels.assert_not_called()
+        self.assertEqual(sim.physical_time, 0)
+        sim.close()
+        device.wp.synchronize_device.assert_called_once_with(device.device)
+        runtime.close.assert_called_once()
 
     def test_compressible_refresh_reuses_gpu_radius_buffer_each_step(self):
         a=self.api();sim=a.AstroCollisionSimulation(a.SimulationConfig(mode='COMPRESSIBLE'))

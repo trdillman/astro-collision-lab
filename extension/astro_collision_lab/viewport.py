@@ -88,6 +88,7 @@ def _draw():
             return
         if _SHUTDOWN:
             return
+        owner.finish_advance()
         start = time.perf_counter()
         sim = owner.simulation
         channels = sim.display_channels()
