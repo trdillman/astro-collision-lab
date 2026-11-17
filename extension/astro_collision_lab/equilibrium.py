@@ -1,4 +1,4 @@
-"""Owned preparation-only isolation validation; never invoked in live stepping."""
+"""Explicit five-period engineering isolation validation; never part of live readiness."""
 import dataclasses
 import json
 import math

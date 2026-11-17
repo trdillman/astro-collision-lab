@@ -26,7 +26,7 @@ def functions_from(path, names):
 
 @pytest.fixture
 def helpers():
-    return functions_from(ROOT/'validation/native_gui_v2.py',
+    return functions_from(ROOT/'tests/validation/native_gui_v2.py',
                           ('preview_count','point_control_entries','control_points_match'))
 
 
@@ -81,7 +81,7 @@ def test_controls_reject_invalid_world_points(entries,helpers):
 
 @pytest.fixture
 def negative():
-    path=ROOT/'validation/preview_format_negative_control.py'
+    path=ROOT/'tests/validation/preview_format_negative_control.py'
     spec=importlib.util.spec_from_file_location('acl_preview_negative_test',path)
     module=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -56,6 +56,8 @@ class SimulationConfig:
     specific_internal_energy: float = 0.0
     courant_number: float = 0.3
     precision: str = "float32"
+    tree_max_depth: int = 16
+    tree_storage: str = "STRIDED"
 
     @property
     def density_label(self) -> str:
@@ -94,6 +96,36 @@ class SimulationConfig:
             raise ValueError("theta must be at most 0.8 for the tree gravity core")
         if self.mode.upper() == "IMPACT" and self.substeps != 1:
             raise ValueError("IISPH chooses adaptive inner steps; substeps must be 1")
+        if (isinstance(self.tree_max_depth, bool) or not isinstance(self.tree_max_depth, int)
+                or not 1 <= self.tree_max_depth <= 16):
+            raise ValueError("tree_max_depth must be an integer in [1, 16]")
+        if self.tree_storage not in ("STRIDED", "COMPACT"):
+            raise ValueError("tree_storage must be STRIDED or COMPACT")
+        if self.mode.upper() == "GALAXY":
+            galaxy_tree_config(self).validate()
+
+
+def galaxy_tree_config(config: SimulationConfig):
+    """Keep preflight and the actual solver on the same depth/storage contract."""
+    from ._vendor.astro_warp.product.model import Precision
+    from ._vendor.astro_warp.product.tree import BarnesHutConfig, MAX_TREE_NODES, sparse_node_capacity
+
+    nodes = sparse_node_capacity(config.particle_count, config.tree_max_depth)
+    if config.tree_storage == 'STRIDED' and nodes > MAX_TREE_NODES:
+        raise ValueError(
+            f"Galaxy requests {config.particle_count} total particles at depth {config.tree_max_depth}: "
+            f"tree node capacity {nodes} exceeds supported maximum {MAX_TREE_NODES}. "
+            "Reduce total particles or maximum tree depth."
+        )
+    tree = BarnesHutConfig(capacity=config.particle_count, count=config.particle_count,
+        gravitational_constant=config.gravitational_constant, dt=config.dt,
+        substeps=config.substeps, softening=config.softening, theta=config.theta,
+        max_depth=config.tree_max_depth, stack_capacity=1 + 7 * config.tree_max_depth,
+        precision=Precision(config.precision))
+    if config.tree_storage == 'COMPACT':
+        from .compact_tree import compact_tree_config
+        tree = compact_tree_config(tree)
+    return tree
 
 
 @dataclass(frozen=True)
@@ -301,11 +333,13 @@ class AstroCollisionSimulation:
         mode = self.config.mode.upper()
         cfg = self.config
         if mode == "GALAXY":
-            from ._vendor.astro_warp.product.tree import BarnesHutConfig, BarnesHutRuntime
-            runtime = BarnesHutRuntime(context, BarnesHutConfig(capacity=cfg.particle_count,
-                count=cfg.particle_count, gravitational_constant=cfg.gravitational_constant,
-                dt=cfg.dt, substeps=cfg.substeps, softening=cfg.softening, theta=cfg.theta,
-                precision=Precision(cfg.precision)))
+            from ._vendor.astro_warp.product.tree import BarnesHutRuntime
+            if cfg.tree_storage == 'COMPACT':
+                from .compact_tree import CompactBarnesHutRuntime
+                runtime_class = CompactBarnesHutRuntime
+            else:
+                runtime_class = BarnesHutRuntime
+            runtime = runtime_class(context, galaxy_tree_config(cfg))
             self.runtime = runtime
             runtime.load_bodies(prepared.bodies)
         elif mode == "IMPACT":
@@ -365,6 +399,11 @@ class AstroCollisionSimulation:
                 raise RuntimeError('solver did not retain the exact active particle count')
         elif mode == 'GALAXY':
             self.stats['gravity_backend']='TREE'
+            self.stats['tree_max_depth']=runtime.config.max_depth
+            self.stats['tree_node_capacity']=runtime._total_nodes
+            self.stats['tree_storage']=cfg.tree_storage
+            if cfg.tree_storage == 'COMPACT':
+                self.stats['tree_storage_status']=runtime.storage_status()
         else:
             self.stats['gravity_backend']=runtime.hydro.gravity.selected_backend
         return self
@@ -388,6 +427,9 @@ class AstroCollisionSimulation:
             )
             solver_ms = float(self.runtime.last_step_ms)
             self._refresh_channels()
+            if self.config.mode.upper() == 'GALAXY' and self.config.tree_storage == 'COMPACT':
+                self.stats['tree_node_capacity']=self.runtime._total_nodes
+                self.stats['tree_storage_status']=self.runtime.storage_status()
         except BaseException as error:
             # Vendor channels may already have changed in place. Neither a new
             # display request nor another step may expose that failed state.

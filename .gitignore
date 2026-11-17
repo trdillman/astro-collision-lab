@@ -7,3 +7,4 @@ artifacts/
 status/
 *.egg-info/
 dist/
+/extension/astro_collision_lab/_build.json

@@ -35,3 +35,11 @@ fixtures. They are not a sourced Earth/iron/ANEOS material library. The unguided
 compressible option has no published giant-impact validation or measured 100k viewport
 performance yet. The default collisionless and IISPH modes also require the new add-on's
 own 100k active-particle live-viewport acceptance measurements.
+
+## Warp 1.18.0 pin update (2026-10-31)
+
+Astro Warp was not re-vendored. Only the vendored Warp version constants were updated to the
+1.18.0 target: `phase0/constants.py` (`WARP_VERSION`, wheel filename, SHA-256, PyPI URL) and
+`product/model.py` (`DeviceDescriptor.required_warp_version`). The existing runtime version
+checks (`warp_version_compatible`) are already a same-major, minor-floor comparison and were
+left unchanged.

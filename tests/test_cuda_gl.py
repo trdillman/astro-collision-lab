@@ -300,9 +300,15 @@ class NativeStatusContracts(unittest.TestCase):
                   0x80CA: 1, 0x8009: 0x8006, 0x883D: 0x8006}
         indexed = [dict(blend0), dict(blend1)]
         original = [dict(b) for b in indexed]
+        uniforms = []
 
         def call(name, result, args, *values):
             if name == "glGetIntegerv":
+                if values[0] == 0x0BA2:
+                    pointer = ctypes.cast(values[1], ctypes.POINTER(ctypes.c_int))
+                    for i, value in enumerate((13, 17, 800, 600)):
+                        pointer[i] = value
+                    return
                 ctypes.cast(values[1], ctypes.POINTER(ctypes.c_int))[0] = (
                     indexed[0][values[0]] if values[0] in indexed[0] else state[values[0]])
             elif name == "glGetIntegeri_v":
@@ -330,7 +336,9 @@ class NativeStatusContracts(unittest.TestCase):
                 for b in targets:
                     b.update(zip((0x8009, 0x883D), vals))
             elif name == "glGetUniformLocation":
-                return 0
+                return 99 if values[1] == b"u_viewport_origin" else 0
+            elif name == "glUniform2f":
+                uniforms.append(values)
             elif name == "glDrawArraysInstanced":
                 raise RuntimeError("draw failed")
 
@@ -341,6 +349,7 @@ class NativeStatusContracts(unittest.TestCase):
                     shaded=True, alignment=0, blend_mode="ALPHA",
                     fixed_normal=(0, 0, 1), lock_axis=(0, 0, 1))
         self.assertEqual(indexed, original)
+        self.assertIn((99, 13, 17), uniforms)
 
 
 class Contracts(unittest.TestCase):

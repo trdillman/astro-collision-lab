@@ -350,6 +350,19 @@ class ACLSceneSettings(PropertyGroup):
         name="Gravity constant G", default=1.0, min=0.000001, precision=4,
         description="Gravitational constant in normalized simulation units",
     )
+    tree_max_depth: IntProperty(
+        update=_source_changed, name="Maximum tree depth", default=16, min=1, max=16,
+        description="Maximum galaxy octree subdivision. Lower depths use less tree memory but "
+                    "can make crowded leaves expensive. Editing rebuilds the initial state",
+    )
+    tree_storage: EnumProperty(
+        update=_source_changed, name="Tree storage", default="STRIDED",
+        items=(
+            ("STRIDED", "Reserved", "Original fixed slots per level; captured GPU submission"),
+            ("COMPACT", "Compact", "Allocate occupied reachable nodes and grow reusable buffers; "
+             "synchronized allocation checks, without captured GPU submission"),
+        ),
+    )
     blend_mode: EnumProperty(update=_appearance_changed, name="Particle blending",items=(
         ("OPAQUE","Opaque","Solid point surfaces; source alpha is ignored"),
         ("ALPHA","Alpha","Use source opacity"),
@@ -399,7 +412,7 @@ class ACLSceneSettings(PropertyGroup):
 
 class ACL_OT_install_dependencies(Operator):
     bl_idname="acl.install_dependencies"
-    bl_label="Install certified Warp 1.15.0"
+    bl_label="Install certified Warp 1.18.0"
     def execute(self,context):
         from .dependencies import install
         install()
@@ -510,7 +523,7 @@ class ACL_OT_galaxy_preset(Operator):
         except Exception as exc:
             self.report({"ERROR"}, f"Could not author galaxies: {exc}")
             return {"CANCELLED"}
-        self.report({"INFO"}, "Authored 100,000 requested particles across four sources. Preparation will validate each galaxy in isolation.")
+        self.report({"INFO"}, "Authored 100,000 requested particles across four sources. Galaxy isolation is not validated; use Validate Galaxy Isolation to check this model.")
         return {"FINISHED"}
 
 
@@ -559,6 +572,32 @@ class ACL_OT_start(Operator):
 
     def execute(self, context):
         return _runtime_action(self, context, "start")
+
+
+class ACL_OT_validate_isolation(Operator):
+    bl_idname = "acl.validate_isolation"
+    bl_label = "Validate Galaxy Isolation"
+    bl_description = ("Run the full five-reference-period engineering stability gate on the exact authored model; "
+                      "this can use the GPU for an extended time")
+
+    @classmethod
+    def poll(cls, context):
+        if context.scene is None or context.scene.acl_settings.mode != "GALAXY":
+            return False
+        try:
+            from .runtime import controller
+            return controller.simulation is None and controller.warming is None and not controller.deferred
+        except Exception:
+            return False
+
+    def execute(self, context):
+        from .runtime import controller
+        try:
+            controller.validate_isolation(context)
+        except Exception as exc:
+            self.report({"ERROR"}, f"Isolation validation: {exc}")
+            return {"CANCELLED"}
+        return {"FINISHED"}
 
 
 class ACL_OT_balance_sampling(Operator):
@@ -661,7 +700,7 @@ def _draw_body(layout, context):
             for key in ("thickness", "toomre_q", "rotation_fraction"):
                 physical.prop(body, key)
         layout.label(text="Components inherit root structure and motion")
-        layout.label(text="Physical edits require isolation preparation")
+        layout.label(text="Physical edits rebuild; stability validation is optional")
         return
     physical.prop(body, "kind")
     if context.scene.acl_settings.mode == "GALAXY":
@@ -721,6 +760,7 @@ class ACL_PT_main(Panel):
             layout.operator("acl.balance_sampling", icon="MOD_PARTICLES")
         elif settings.mode == "GALAXY":
             info.label(text="Collisionless gravity; approximate initial state")
+            layout.operator("acl.validate_isolation", icon="CHECKMARK")
         else:
             info.label(text="Experimental condensed-material SPH")
             info.label(text="No vapor or phase-change model")
@@ -731,7 +771,7 @@ class ACL_PT_main(Panel):
         row = layout.row(align=True)
         row.operator("acl.reset", icon="FILE_REFRESH")
         row.operator("acl.step", icon="FRAME_NEXT")
-        layout.label(text="Physical edits rebuild; resume if playing")
+        layout.label(text="Physical edits rebuild; Galaxy stability remains separately validated")
         layout.label(text="Appearance edits redraw immediately")
         layout.label(text=settings.authoring_status)
         _draw_status(layout)
@@ -754,7 +794,15 @@ class ACL_PT_simulation(Panel):
         layout.prop(settings, "theta")
         layout.prop(settings, "softening")
         layout.prop(settings,"seed")
-        if settings.mode=="GALAXY":layout.prop(settings,"substeps")
+        if settings.mode=="GALAXY":
+            layout.prop(settings,"substeps")
+            layout.prop(settings,"tree_max_depth")
+            layout.prop(settings,"tree_storage")
+            status = _runtime_status()
+            solver = status.get('solver', {}) if isinstance(status, dict) else {}
+            storage = solver.get('tree_storage_status', {})
+            if storage:
+                layout.label(text=f"Tree nodes: {storage['actual_nodes']:,} used / {storage['allocated_nodes']:,} allocated")
         else:
             for key in (("shear_modulus","yield_stress","melt_energy") if settings.mode=="IMPACT" else ("bulk_modulus","shear_modulus","yield_stress","melt_energy","specific_internal_energy","courant_number")):
                 layout.prop(settings,key)
@@ -832,6 +880,7 @@ _CLASSES = (
     ACL_OT_galaxy_preset,
     ACL_OT_build_from_selection,
     ACL_OT_start,
+    ACL_OT_validate_isolation,
     ACL_OT_balance_sampling,
     ACL_OT_pause,
     ACL_OT_reset,

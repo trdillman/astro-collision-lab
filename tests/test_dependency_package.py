@@ -36,3 +36,12 @@ def test_slim_build_contains_no_dependency_payload(tmp_path):
         assert manifest['source_fingerprint']==code_fingerprint(tmp_path/'extension/astro_collision_lab')
     first=archive.read_bytes()
     assert mod.build().read_bytes()==first
+
+
+def test_manifest_permission_reasons_fit_blender_limit():
+    # Blender's extension validator rejects permission reasons over 64 characters.
+    import tomllib
+    root=Path(__file__).resolve().parents[1]
+    manifest=tomllib.loads((root/'extension/astro_collision_lab/blender_manifest.toml').read_text(encoding='utf-8'))
+    for key, reason in manifest['permissions'].items():
+        assert len(reason)<=64, (key, len(reason))

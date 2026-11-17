@@ -707,7 +707,7 @@ class RuntimePlan:
 
 @dataclass(frozen=True)
 class DeviceDescriptor:
-    required_warp_version: str = "1.15.0"
+    required_warp_version: str = "1.18.0"
     required_device: str = "cuda:0"
     cuda_required: bool = True
 

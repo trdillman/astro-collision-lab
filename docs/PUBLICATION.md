@@ -1,5 +1,23 @@
 # Publication provenance and development workflow
 
+## Current candidate export
+
+The `feat/tree-depth-control` branch exports canonical commit
+`d21a3b4a4ff06cdddc7ccaff5c071b99d46b5df8` onto the public history, without
+publishing the private repository's history, local evidence or owner working files.
+It includes the previously committed tree controls/compact storage and the later
+sphere-depth/isolation-status corrections. Public-only standalone packages remain
+present; their shared renderer copy receives the same correction.
+
+The existing public license declaration is preserved. The canonical manifest's
+version and dependency pin are updated here while its differing license/copyright
+declarations are not exported. Thus the public manifest and runtime fingerprint
+must not be claimed byte-identical to a previously qualified canonical artifact.
+This is a source candidate, not a release promotion. The historical identities
+below describe the original publication only.
+
+## Historical initial publication
+
 This sanitized initial publication derives from canonical local commit `a3a6734889e48f71518cee06d5e90e8245b56d46`. Its runtime Python and manifest bytes are unchanged from the qualified build. Private conversation/tracker snapshots, host execution metadata, original history, machine-specific scripts and dependency binaries are excluded; they remain preserved locally.
 
 The existing canonical repository remains the single development source. This checkout is a publication artifact, not a second development lane. Future changes are implemented and qualified in canonical development, then exported through the same reviewed allowlist into the public repository and normal-pushed as new commits. Never force-push or replace canonical history to synchronize publication. Record canonical-to-public commit mappings locally after each publication.

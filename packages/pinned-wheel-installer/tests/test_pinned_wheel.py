@@ -13,7 +13,11 @@ def make_wheel(entries):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
         for name, text in entries.items():
-            z.writestr(name, text)
+            # Preserve malicious names on Windows: ZipInfo's constructor
+            # normalizes backslashes before writestr would see the entry.
+            entry = zipfile.ZipInfo()
+            entry.filename = name
+            z.writestr(entry, text)
     data = buffer.getvalue()
     return data, hashlib.sha256(data).hexdigest()
 
@@ -56,7 +60,7 @@ def test_hash_mismatch_rejected():
         pw.verify_archive(data, "0" * 64)
 
 
-@pytest.mark.parametrize("name", ["../evil.py", "/abs.py", "a\\b.py", "C:evil.py"])
+@pytest.mark.parametrize("name", ["../evil.py", "/abs.py", "a\\b.py", "C:evil.py", "a\x00b.py"])
 def test_unsafe_entries_rejected(name):
     data, sha = make_wheel({name: "x"})
     with pytest.raises(pw.WheelError, match="unsafe"):
