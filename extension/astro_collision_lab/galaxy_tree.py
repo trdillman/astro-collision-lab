@@ -5,6 +5,26 @@ from itertools import pairwise
 from ._vendor.astro_warp.product.tree import BarnesHutRuntime
 
 
+def record_radix_sort(runtime, keys, indices):
+    arrays = runtime._arrays
+    wp = runtime._require_wp()
+    kernels = runtime._require_kernels()
+    device = runtime.device_context.device
+    count = runtime.config.count
+    bounds = arrays["bounds"]
+    wp.launch(kernels.clear_bounds, dim=6, inputs=[bounds], device=device)
+    wp.launch(kernels.reduce_bounds, dim=count,
+              inputs=[arrays["positions"], arrays["active"], count, bounds], device=device)
+    wp.launch(kernels.finalize_bounds, dim=1, inputs=[bounds], device=device)
+    wp.launch(kernels.compute_morton, dim=runtime._sort_size,
+              inputs=[arrays["positions"], arrays["active"], count, runtime._sort_size,
+                      runtime.config.max_depth, bounds, arrays["body_keys"], keys, indices],
+              device=device)
+    wp.utils.radix_sort_pairs(keys, indices, runtime._sort_size)
+    wp.copy(arrays["sorted_keys"], keys, count=runtime._sort_size)
+    wp.copy(arrays["sorted_indices"], indices, count=runtime._sort_size)
+
+
 class RadixTreeRuntime(BarnesHutRuntime):
     def rebuild_tree(self):
         # load_bodies has installed fresh device arrays here, before graph capture.
@@ -25,23 +45,7 @@ class RadixTreeRuntime(BarnesHutRuntime):
         arrays = self._arrays
         if "radix_keys" not in arrays:
             return super()._record_bounds_sort()
-        wp = self._require_wp()
-        kernels = self._require_kernels()
-        device = self.device_context.device
-        count = self.config.count
-        bounds = arrays["bounds"]
-        wp.launch(kernels.clear_bounds, dim=6, inputs=[bounds], device=device)
-        wp.launch(kernels.reduce_bounds, dim=count,
-                  inputs=[arrays["positions"], arrays["active"], count, bounds], device=device)
-        wp.launch(kernels.finalize_bounds, dim=1, inputs=[bounds], device=device)
-        keys, indices = arrays["radix_keys"], arrays["radix_indices"]
-        wp.launch(kernels.compute_morton, dim=self._sort_size,
-                  inputs=[arrays["positions"], arrays["active"], count, self._sort_size,
-                          self.config.max_depth, bounds, arrays["body_keys"], keys, indices],
-                  device=device)
-        wp.utils.radix_sort_pairs(keys, indices, self._sort_size)
-        wp.copy(arrays["sorted_keys"], keys, count=self._sort_size)
-        wp.copy(arrays["sorted_indices"], indices, count=self._sort_size)
+        record_radix_sort(self, arrays["radix_keys"], arrays["radix_indices"])
 
     def diagnostics(self):
         report = super().diagnostics()
@@ -50,12 +54,16 @@ class RadixTreeRuntime(BarnesHutRuntime):
         return report
 
 
+def configure_galaxy_walk(runtime):
+    wp = runtime._require_wp()
+    if runtime.config.precision.value == "float32" and wp.get_device(runtime.device_context.device).is_cuda:
+        from .galaxy_walk import tree_acceleration_walk
+        if runtime._kernels.tree_acceleration_walk is not tree_acceleration_walk:
+            runtime._kernels = replace(runtime._kernels, tree_acceleration_walk=tree_acceleration_walk)
+            runtime.walk_block_dim = 512
+
+
 class GalaxyTreeRuntime(RadixTreeRuntime):
     def rebuild_tree(self):
-        wp = self._require_wp()
-        if self.config.precision.value == "float32" and wp.get_device(self.device_context.device).is_cuda:
-            from .galaxy_walk import tree_acceleration_walk
-            if self._kernels.tree_acceleration_walk is not tree_acceleration_walk:
-                self._kernels = replace(self._kernels, tree_acceleration_walk=tree_acceleration_walk)
-                self.walk_block_dim = 512
+        configure_galaxy_walk(self)
         super().rebuild_tree()

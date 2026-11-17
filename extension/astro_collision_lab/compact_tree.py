@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
+from itertools import pairwise
 from types import SimpleNamespace
 
 from ._vendor.astro_warp.product.tree import (
     BarnesHutConfig, BarnesHutRuntime, MAX_TREE_NODES, _quad_dtype,
 )
 from ._vendor.astro_warp.product.nbody import Precision, _dtypes, _registrars
+from .galaxy_tree import configure_galaxy_walk, record_radix_sort
 
 
 def compact_tree_config(config: BarnesHutConfig) -> BarnesHutConfig:
@@ -62,6 +64,31 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
         self._compact_kernels = None
         self._compact_actual = 0
         self._compact_growths = 0
+        self._compact_radix = False
+
+    def rebuild_tree(self):
+        configure_galaxy_walk(self)
+        # The classification buffer is idle during sorting. Warp requires two
+        # int64 keys and two int32 indices per padded slot (six int32 words).
+        self._compact_radix = (self.config.count * self.config.max_depth >= 6 * self._sort_size
+                               and all(a < b for a, b in pairwise(self._stable_id_order)))
+        super().rebuild_tree()
+
+    def _record_bounds_sort(self):
+        if not self._compact_radix:
+            return super()._record_bounds_sort()
+        self._ensure_compact_scratch()
+        wp = self._require_wp()
+        device = self.device_context.device
+        address = self._arrays["compact_flags"].ptr
+        length = 2 * self._sort_size
+        keys = wp.array(ptr=address, shape=(length,), dtype=wp.int64, device=device)
+        indices = wp.array(ptr=address + 8 * length, shape=(length,), dtype=wp.int32, device=device)
+        record_radix_sort(self, keys, indices)
+
+    def diagnostics(self):
+        report = super().diagnostics()
+        return replace(report, sort_algorithm="stable_morton_radix") if self._compact_radix else report
 
     def _submit(self, name, record):
         record()
@@ -118,6 +145,16 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
                 raise MemoryError(f'compact tree allocation needs {additional} additional GPU bytes '
                                   f'plus {reserve} reserve; only {free} are free')
 
+    def _ensure_compact_scratch(self):
+        if 'compact_flags' not in self._arrays:
+            wp = self._require_wp()
+            device = self.device_context.device
+            slots = self.config.count * self.config.max_depth
+            self._preflight_device_bytes(4 * slots + 4)
+            flags = wp.zeros(slots, dtype=wp.int32, device=device)
+            total = wp.zeros(1, dtype=wp.int32, device=device)
+            self._arrays.update(compact_flags=flags, compact_total=total)
+
     def _record_topology_clear_build(self):
         wp = self._require_wp()
         kernels = self._require_kernels()
@@ -126,10 +163,7 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
         config = self.config
         device = self.device_context.device
         slots = config.count * config.max_depth
-        if 'compact_flags' not in arrays:
-            self._preflight_device_bytes(4 * slots + 4)
-            arrays['compact_flags'] = wp.zeros(slots, dtype=wp.int32, device=device)
-            arrays['compact_total'] = wp.zeros(1, dtype=wp.int32, device=device)
+        self._ensure_compact_scratch()
         # slot_nodes row zero is the root. Subsequent rows are a level-major
         # inclusive prefix scan; each reachable prefix head receives a dense ID.
         mapped = wp.array(ptr=arrays['slot_nodes'].ptr + 4 * config.count,
@@ -155,6 +189,9 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
                           arrays['compact_flags'], arrays['slot_nodes'], arrays['node_prefix'],
                           arrays['node_levels'], arrays['node_start'], arrays['node_end'],
                           arrays['node_count'], arrays['node_cursor'], required], device=device)
+        wp.launch(compact.prune_mapping, dim=slots,
+                  inputs=[config.count, arrays['slot_nodes'], arrays['node_levels'],
+                          arrays['node_end']], device=device)
 
     def _record_node_moments(self):
         wp = self._require_wp()
@@ -279,6 +316,7 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
         wp.launch(
             kernels.tree_acceleration_walk,
             dim=count,
+            block_dim=self.walk_block_dim,
             inputs=[
                 arrays["sorted_indices"],
                 count,
@@ -339,10 +377,17 @@ def _compact_kernels(wp, precision):
             if head != 0:
                 parent_shift = shift + 3
                 parent_prefix = key >> wp.int64(parent_shift)
-                start = lower_prefix(keys, count, parent_prefix, parent_shift)
-                end = lower_prefix(keys, count, parent_prefix + wp.int64(1), parent_shift)
-                # Sentinel >> shift remains above every valid prefix, including root.
-                if end - start > leaf_capacity:
+                # Find the start of this parent, clipped to the preceding K
+                # slots. A run longer than K includes start+K even if clipped.
+                low = wp.max(0, slot - leaf_capacity)
+                high = slot
+                while low < high:
+                    middle = (low + high) // 2
+                    if (keys[middle] >> wp.int64(parent_shift)) < parent_prefix:
+                        low = middle + 1
+                    else:
+                        high = middle
+                if leaf_capacity < count - low and (keys[low + leaf_capacity] >> wp.int64(parent_shift)) == parent_prefix:
                     value = 1
         flags[index] = value
 
@@ -365,13 +410,6 @@ def _compact_kernels(wp, precision):
         slot = index % count
         shift = 3 * (depth - level)
         prefix = keys[slot] >> wp.int64(shift)
-        # Inclusive scan repeats the preceding ID through pruned prefixes. Mark
-        # those ranges explicitly absent before the force layout can consult them.
-        head = lower_prefix(keys, count, prefix, shift)
-        if keys[slot] == sentinel:
-            mapping[count + index] = -1
-        elif flags[(level - 1) * count + head] == 0:
-            mapping[count + index] = -1
         if flags[index] != 0:
             end = lower_prefix(keys, count, prefix + wp.int64(1), shift)
             node = mapping[count + index]
@@ -380,6 +418,17 @@ def _compact_kernels(wp, precision):
             starts[node] = slot
             ends[node] = end - 1
             counts[node] = end - slot
+
+    @warp_kernel
+    def prune_mapping(count: int, mapping: wp.array(dtype=wp.int32),
+                      levels: wp.array(dtype=wp.int32), ends: wp.array(dtype=wp.int32)):
+        index = wp.tid()
+        node = mapping[count + index]
+        # Scanning repeats the last head's ID. A slot at or after that
+        # head belongs to it exactly when the level matches and the run
+        # hasn't ended. build has published every reachable range by now.
+        if levels[node] != index // count + 1 or ends[node] < index % count:
+            mapping[count + index] = -1
 
     @warp_kernel
     def collect_diag(counts: wp.array(dtype=wp.int32), levels: wp.array(dtype=wp.int32),
@@ -775,6 +824,6 @@ def _compact_kernels(wp, precision):
                     walk_mass_diagonal[entry] = quad(mass, qxx[node], qyy[node], qzz[node])
                     walk_off_diagonal[entry] = vector(qxy[node], qxz[node], qyz[node])
 
-    return SimpleNamespace(classify=classify, build=build, collect_diag=collect_diag,
+    return SimpleNamespace(classify=classify, build=build, prune_mapping=prune_mapping, collect_diag=collect_diag,
                            leaf_moments=leaf_moments, reduce_moments=reduce_moments,
                            prepare_walk_slots=prepare_walk_slots, fill_walk_nodes=fill_walk_nodes)

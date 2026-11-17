@@ -40,6 +40,60 @@ def test_capacity_reuses_allocation_and_fails_closed_at_budget():
         grown_node_capacity(17, 9_000_001)
 
 
+@pytest.mark.parametrize("depth,ordered,radix", [(4, True, False), (16, False, False), (16, True, True)])
+def test_compact_sort_reuses_flags_and_maps_only_reachable_prefixes(depth, ordered, radix):
+    import numpy as np
+    wp = pytest.importorskip("warp")
+    from astro_collision_lab._vendor.astro_warp.product.sampling import BodySet
+
+    class CPUContext:
+        device = "cpu"
+        def initialize(self):
+            wp.init()
+            self.wp = wp
+
+    count = 91
+    rng = np.random.default_rng(55)
+    positions = rng.normal(size=(count, 3)).astype(np.float32)
+    positions[:9] = positions[0]
+    positions[9:17] = positions[9]
+    ids = rng.permutation(count).astype(np.int64) if not ordered else np.arange(count, dtype=np.int64)
+    active = np.ones(count, np.int32)
+    active[::11] = 0
+    bodies = BodySet(positions=positions, velocities=np.zeros_like(positions), masses=np.ones(count),
+                     radii=np.zeros(count), active=active, stable_ids=ids)
+    rt = CompactBarnesHutRuntime(CPUContext(), config(count, depth))
+    try:
+        rt.load_bodies(bodies)
+        scratch = rt._arrays["compact_flags"].ptr
+        rt.rebuild_tree()
+        assert rt._arrays["compact_flags"].ptr == scratch
+        assert rt._compact_radix == radix
+        assert "radix_keys" not in rt._arrays and "radix_indices" not in rt._arrays
+        arrays = rt._arrays
+        sorted_keys = arrays["sorted_keys"].numpy()[:count]
+        sorted_ids = arrays["sorted_indices"].numpy()[:count]
+        keys = arrays["body_keys"].numpy()
+        expected_order = sorted(np.flatnonzero(active), key=lambda i: (keys[i], ids[i]))
+        np.testing.assert_array_equal(sorted_ids[:len(expected_order)], expected_order)
+        table = arrays["slot_nodes"].numpy().reshape(depth+1, count)
+        node = 0
+        for level in range(1, depth+1):
+            shift = 3*(depth-level)
+            prefixes = sorted_keys[:len(expected_order)] >> shift
+            parents, counts = np.unique(prefixes >> 3, return_counts=True)
+            sizes = dict(zip(parents, counts))
+            expected = np.full(count, -1, np.int32)
+            for prefix in np.unique(prefixes):
+                if sizes[prefix >> 3] > rt.config.leaf_capacity:
+                    node += 1
+                    expected[np.flatnonzero(prefixes == prefix)] = node
+            np.testing.assert_array_equal(table[level], expected)
+        assert rt.storage_status()["actual_nodes"] == node + 1
+    finally:
+        rt.close()
+
+
 @pytest.mark.parametrize('free_nodes,expected_capacity', [(110, 101), (100, None)])
 def test_growth_uses_exact_requirement_when_only_spare_headroom_exceeds_gpu_budget(
         free_nodes, expected_capacity):

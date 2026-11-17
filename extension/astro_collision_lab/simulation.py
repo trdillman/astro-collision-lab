@@ -420,8 +420,7 @@ class AstroCollisionSimulation:
 
     @property
     def supports_queued_step(self):
-        return (self.config.mode.upper() == "GALAXY" and self.config.tree_storage == "STRIDED"
-                and self.config.substeps == 1)
+        return self.config.mode.upper() == "GALAXY" and self.config.substeps == 1
 
     def queue_viewport_step(self):
         """Keep just one KDK substep in flight while Blender prepares the redraw."""
