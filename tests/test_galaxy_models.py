@@ -4,6 +4,19 @@ from astro_collision_lab.simulation import BodySpec, SimulationConfig
 from astro_collision_lab import galaxy_models as gm
 
 
+def test_concurrent_components_preserve_seeds_transforms_and_binding_order():
+    halo = BodySpec("first", kind="HALO", particle_count=65000, seed=11)
+    second = replace(halo, name="second", particle_count=35000, seed=7,
+                     spin=(0., 0., .25), position=(1., 2., 3.),
+                     rotation=((0., -1., 0.), (1., 0., 0.), (0., 0., 1.)))
+    config = SimulationConfig(particle_count=100000)
+    combined = gm.sample((halo, second), config, np)
+    for body, actual in zip((halo, second), combined, strict=True):
+        expected, = gm.sample((body,), config, np)
+        for left, right in zip(expected, actual, strict=True):
+            np.testing.assert_array_equal(left, right)
+
+
 def test_grouped_sampling_preserves_rng_assignment_across_empty_bins():
     bins = np.array([5, 2, 5, 0, 2, 5, 0])
     groups = [(k, indices.tolist()) for k, indices in gm._bin_groups(bins, 9, np)]

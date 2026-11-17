@@ -5,9 +5,19 @@ spheres. Disk compounds use numerical axisymmetric circular support and spherica
 Jeans support for spheroids. The latter are candidates, never certified by formula.
 """
 from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor
+from threading import Lock
 import math
 import zlib
 _CURVE_CACHE={}
+_CURVE_CACHE_LOCK = Lock()
+
+
+def _rotate_vectors(values, rotation, np):
+    # Samplers own these arrays, so an identity transform needs no copy.
+    if np.array_equal(rotation, ((1, 0, 0), (0, 1, 0), (0, 0, 1))):
+        return values
+    return values @ np.asarray(rotation).T
 
 
 def members(spec, specs):
@@ -28,7 +38,9 @@ def enclosed(spec, r, np):
 
 def circular_curve(spec, group, G, eps, np):
     key=(spec.radius,G,eps,tuple((s.kind,s.mass,s.radius,s.scale_length,s.thickness) for s in group))
-    if key in _CURVE_CACHE:return _CURVE_CACHE[key]
+    with _CURVE_CACHE_LOCK:
+        if key in _CURVE_CACHE:
+            return _CURVE_CACHE[key]
     grid=np.geomspace(max(spec.radius*1e-5,eps*.02),spec.radius,300)
     force=np.zeros_like(grid)
     for s in group:
@@ -49,8 +61,10 @@ def circular_curve(spec, group, G, eps, np):
                 distance2=dx*dx+transverse2
                 force[i]+=G*np.sum(mass[:,None]*dx/(distance2*np.sqrt(distance2)))/64
     curve=(grid,np.maximum(force*grid,0.))
-    if len(_CURVE_CACHE)>=64:_CURVE_CACHE.pop(next(iter(_CURVE_CACHE)))
-    _CURVE_CACHE[key]=curve
+    with _CURVE_CACHE_LOCK:
+        if key not in _CURVE_CACHE and len(_CURVE_CACHE) >= 64:
+            _CURVE_CACHE.pop(next(iter(_CURVE_CACHE)))
+        _CURVE_CACHE[key] = curve
     return curve
 
 
@@ -133,61 +147,73 @@ def eddington_speeds(spec,group,r,rng,G,eps,np):
     return out*np.sqrt(2*np.interp(r,grid,psi))
 
 
-def sample(specs, config, np):
-    rows=[]
-    for i,s in enumerate(specs):
-        rng=np.random.default_rng([config.seed,s.seed,zlib.crc32(s.kind.encode())]);n=s.particle_count
-        a=s.scale_length if s.scale_length>0 else s.radius/(5 if s.kind=='DISK' else 10)
-        group=members(s,specs); G=config.gravitational_constant
-        if s.kind=='DISK':
-            rg=np.linspace(0,s.radius,4097); cdf=enclosed(s,rg,np)/s.mass
-            r=np.interp(rng.random(n),cdf,rg);phi=rng.random(n)*2*np.pi
-            z0=max(s.thickness/2,1e-6)
-            z=z0*np.arctanh(np.clip(rng.uniform(-1,1,n),-.999999,.999999))
-            local=np.column_stack((r*np.cos(phi),r*np.sin(phi),z))
-            grid,vc2=circular_curve(s,group,G,config.softening,np)
-            omega2=vc2/grid**2
-            kappa2=np.maximum(grid*np.gradient(omega2,grid)+4*omega2,omega2*.1)
-            sigma_surface=s.mass/(2*np.pi*a*a*(1-(1+s.radius/a)*np.exp(-s.radius/a)))*np.exp(-grid/a)
-            sr=np.minimum(s.toomre_q*3.36*G*sigma_surface/np.sqrt(kappa2),np.sqrt(vc2)*.4)
-            # Radial Jeans asymmetric drift, using the actual radial dispersion profile.
-            drift=sr*sr*(grid/a-1-grid*np.gradient(np.log(np.maximum(sr*sr,1e-20)),grid)+kappa2/(4*np.maximum(omega2,1e-20)))
-            mean=np.sqrt(np.maximum(vc2-drift,0))
-            vr=rng.normal(size=n)*np.interp(r,grid,sr)
-            vt=s.rotation_fraction*np.interp(r,grid,mean)+rng.normal(size=n)*np.interp(r,grid,sr*np.sqrt(kappa2/(4*np.maximum(omega2,1e-20))))
-            vz=rng.normal(size=n)*vertical_dispersion(s,group,r,z,grid,sigma_surface,G,config.softening,np)
-            motion=np.column_stack((vr*np.cos(phi)-vt*np.sin(phi),vr*np.sin(phi)+vt*np.cos(phi),vz))
+def _sample_body(s, specs, config, np):
+    rng=np.random.default_rng([config.seed,s.seed,zlib.crc32(s.kind.encode())]);n=s.particle_count
+    a=s.scale_length if s.scale_length>0 else s.radius/(5 if s.kind=='DISK' else 10)
+    group=members(s,specs); G=config.gravitational_constant
+    if s.kind=='DISK':
+        rg=np.linspace(0,s.radius,4097); cdf=enclosed(s,rg,np)/s.mass
+        r=np.interp(rng.random(n),cdf,rg);phi=rng.random(n)*2*np.pi
+        z0=max(s.thickness/2,1e-6)
+        z=z0*np.arctanh(np.clip(rng.uniform(-1,1,n),-.999999,.999999))
+        local=np.column_stack((r*np.cos(phi),r*np.sin(phi),z))
+        grid,vc2=circular_curve(s,group,G,config.softening,np)
+        omega2=vc2/grid**2
+        kappa2=np.maximum(grid*np.gradient(omega2,grid)+4*omega2,omega2*.1)
+        sigma_surface=s.mass/(2*np.pi*a*a*(1-(1+s.radius/a)*np.exp(-s.radius/a)))*np.exp(-grid/a)
+        sr=np.minimum(s.toomre_q*3.36*G*sigma_surface/np.sqrt(kappa2),np.sqrt(vc2)*.4)
+        # Radial Jeans asymmetric drift, using the actual radial dispersion profile.
+        drift=sr*sr*(grid/a-1-grid*np.gradient(np.log(np.maximum(sr*sr,1e-20)),grid)+kappa2/(4*np.maximum(omega2,1e-20)))
+        mean=np.sqrt(np.maximum(vc2-drift,0))
+        vr=rng.normal(size=n)*np.interp(r,grid,sr)
+        vt=s.rotation_fraction*np.interp(r,grid,mean)+rng.normal(size=n)*np.interp(r,grid,sr*np.sqrt(kappa2/(4*np.maximum(omega2,1e-20))))
+        vz=rng.normal(size=n)*vertical_dispersion(s,group,r,z,grid,sigma_surface,G,config.softening,np)
+        motion=np.column_stack((vr*np.cos(phi)-vt*np.sin(phi),vr*np.sin(phi)+vt*np.cos(phi),vz))
+    else:
+        cutoff=(s.radius/a)**3/(1+(s.radius/a)**2)**1.5
+        u=np.maximum(rng.random(n)*cutoff,1e-12)
+        r=a/np.sqrt(u**(-2/3)-1)
+        direction=rng.normal(size=(n,3));direction/=np.linalg.norm(direction,axis=1)[:,None]
+        local=direction*r[:,None]
+        homologous=all(o.kind!='DISK' and math.isclose(o.scale_length or o.radius/10,a,rel_tol=1e-6) for o in group)
+        if homologous:
+            # f(E) proportional to (-E)^(7/2); rejection samples v/v_escape.
+            q=np.empty(n);todo=np.arange(n)
+            while len(todo):
+                trial=rng.random(len(todo)); accept=rng.random(len(todo))*.1 < trial**2*(1-trial**2)**3.5
+                q[todo[accept]]=trial[accept];todo=todo[~accept]
+            esc=np.sqrt(2*G*sum(o.mass for o in group)/np.sqrt(r*r+a*a))
+            speed=q*esc
         else:
-            cutoff=(s.radius/a)**3/(1+(s.radius/a)**2)**1.5
-            u=np.maximum(rng.random(n)*cutoff,1e-12)
-            r=a/np.sqrt(u**(-2/3)-1)
-            direction=rng.normal(size=(n,3));direction/=np.linalg.norm(direction,axis=1)[:,None]
-            local=direction*r[:,None]
-            homologous=all(o.kind!='DISK' and math.isclose(o.scale_length or o.radius/10,a,rel_tol=1e-6) for o in group)
-            if homologous:
-                # f(E) proportional to (-E)^(7/2); rejection samples v/v_escape.
-                q=np.empty(n);todo=np.arange(n)
-                while len(todo):
-                    trial=rng.random(len(todo)); accept=rng.random(len(todo))*.1 < trial**2*(1-trial**2)**3.5
-                    q[todo[accept]]=trial[accept];todo=todo[~accept]
-                esc=np.sqrt(2*G*sum(o.mass for o in group)/np.sqrt(r*r+a*a))
-                speed=q*esc
-            else:
-                speed=eddington_speeds(s,group,r,rng,G,config.softening,np)
-            vel_dir=rng.normal(size=(n,3));vel_dir/=np.linalg.norm(vel_dir,axis=1)[:,None]
-            motion=vel_dir*speed[:,None]
-            # Streaming changes only azimuthal signs, preserving kinetic support.
-            if s.rotation_fraction:
-                cross=local[:,0]*motion[:,1]-local[:,1]*motion[:,0]
-                flip=(cross*np.sign(s.rotation_fraction)<0)&(rng.random(n)<abs(s.rotation_fraction))
-                motion[flip,:2]*=-1
-        matrix=np.asarray(s.rotation);offsets=local@matrix.T;motion=motion@matrix.T
-        motion+=np.cross(np.asarray(s.spin),offsets)
-        # Balanced finite sampling removes only bulk drift, no relaxation/damping.
-        offsets-=offsets.mean(0);motion-=motion.mean(0)
-        rows.append((offsets+s.position,motion+s.velocity,np.full(n,s.mass/n),
-                     np.full(n,.5*(4*np.pi*s.radius**3/(3*n))**(1/3))))
-    return rows
+            speed=eddington_speeds(s,group,r,rng,G,config.softening,np)
+        vel_dir=rng.normal(size=(n,3));vel_dir/=np.linalg.norm(vel_dir,axis=1)[:,None]
+        motion=vel_dir*speed[:,None]
+        # Streaming changes only azimuthal signs, preserving kinetic support.
+        if s.rotation_fraction:
+            cross=local[:,0]*motion[:,1]-local[:,1]*motion[:,0]
+            flip=(cross*np.sign(s.rotation_fraction)<0)&(rng.random(n)<abs(s.rotation_fraction))
+            motion[flip,:2]*=-1
+    offsets = _rotate_vectors(local, s.rotation, np)
+    motion = _rotate_vectors(motion, s.rotation, np)
+    if any(s.spin):
+        motion += np.cross(np.asarray(s.spin), offsets)
+    # Balanced finite sampling removes only bulk drift, no relaxation/damping.
+    offsets-=offsets.mean(0);motion-=motion.mean(0)
+    offsets += s.position
+    motion += s.velocity
+    return (offsets,motion,np.full(n,s.mass/n),
+                 np.full(n,.5*(4*np.pi*s.radius**3/(3*n))**(1/3)))
+
+
+def sample(specs, config, np):
+    # Two NumPy workers overlap large component draws while bounding temporary memory.
+    # The size cutoff is a scheduling heuristic for smaller interactive scenes.
+    if len(specs) < 2 or sum(s.particle_count for s in specs) < 100000:
+        return [_sample_body(s, specs, config, np) for s in specs]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        jobs = [pool.submit(_sample_body, s, specs, config, np) for s in specs]
+        return [job.result() for job in jobs]
+
 
 
 def preview(specs,config,limit=None):
@@ -213,8 +239,10 @@ def preview(specs,config,limit=None):
                 r=a/np.sqrt(u**(-2/3)-1)
                 direction=rng.normal(size=(n,3));direction/=np.linalg.norm(direction,axis=1)[:,None]
                 local=direction*r[:,None]
-            offsets=local@np.asarray(s.rotation).T;offsets-=offsets.mean(0)
-            rows.append(offsets+s.position)
+            offsets = _rotate_vectors(local, s.rotation, np)
+            offsets -= offsets.mean(0)
+            offsets += s.position
+            rows.append(offsets)
         return rows
     rows=[]
     for i,s in enumerate(reduced):
