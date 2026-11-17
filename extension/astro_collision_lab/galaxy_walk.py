@@ -26,6 +26,28 @@ def inverse_root(x: float) -> float:
     ...
 
 
+@wp.func_native("""
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+return (int)__activemask();
+#else
+return 0;
+#endif
+""")
+def live_lanes() -> int:
+    ...
+
+
+@wp.func_native("""
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+return __reduce_min_sync((unsigned)mask, entry);
+#else
+return entry;
+#endif
+""")
+def earliest_entry(mask: int, entry: int) -> int:
+    ...
+
+
 @wp.kernel
 def tree_acceleration_walk(
     sorted_indices: wp.array(dtype=wp.int32),
@@ -59,7 +81,17 @@ def tree_acceleration_walk(
     interactions = wp.int32(0)
     overflow = wp.int32(0)
     entry = wp.int32(0)
-    while entry < total:
+    # Neighboring Morton slots usually visit the same cells. Schedule the
+    # earliest outstanding cell together, preserving each target's own skip
+    # decisions, force terms and summation order. Completed lanes participate
+    # in the vote until every live lane is done, including partial final warps.
+    mask = live_lanes()
+    while True:
+        shared_entry = earliest_entry(mask, entry)
+        if shared_entry >= total:
+            break
+        if entry != shared_entry:
+            continue
         link = walk_links[entry]
         start = link[0]
         end = link[1]
@@ -67,7 +99,8 @@ def tree_acceleration_walk(
         packed = link[3]
         if packed < 0:
             overflow = 1
-            break
+            entry = total
+            continue
         count_node = packed & 16777215
         level = packed >> 24
         if count_node == 0:
