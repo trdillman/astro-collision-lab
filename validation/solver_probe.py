@@ -108,14 +108,18 @@ def final_guardrails(sim):
         'scope':'cumulative solver guards through initialization/warmup/measured frames; final scalar reads outside timing',
         'policy':'any neighbor truncation, velocity clamp, budget-bound step, unconverged neighbor or energy floor hit rejects this diagnostic gate; does not validate a scientific outcome'}
 
-def measure_simulation(sim,bodies,*,frames=120,warmup=5,synchronize):
+def measure_simulation(sim,bodies,*,frames=120,warmup=5,synchronize,on_initialized=None):
     """Initialize/warm, time completed frames, then validate host snapshots outside timing."""
     import numpy as np
     if frames<1 or warmup<0:raise ValueError('frames positive and warmup nonnegative required')
     started=time.perf_counter();sim.initialize(bodies);synchronize()
     init_ms=(time.perf_counter()-started)*1000
+    if on_initialized is not None:on_initialized(sim)
     started=time.perf_counter()
-    for _ in range(warmup):sim.step();synchronize()
+    warmup_frame_ms=[]
+    for _ in range(warmup):
+        tick=time.perf_counter();sim.step();synchronize()
+        warmup_frame_ms.append((time.perf_counter()-tick)*1000)
     warmup_ms=(time.perf_counter()-started)*1000
     before=sim.display_channels()['positions'].numpy().copy()
     physical_start=float(sim.physical_time)
@@ -150,6 +154,7 @@ def measure_simulation(sim,bodies,*,frames=120,warmup=5,synchronize):
         'health_status':'guardrails_pass' if guardrails['solver_guardrails_pass'] is True else 'guardrails_failed' if guardrails['solver_guardrails_pass'] is False else 'not_measured','diagnostic':'synchronized GPU solver + device radius update; no viewport drawing',
         'live_viewport_acceptance':False,'measured_frames':frames,'warmup_frames':warmup,
         'count':int(sim.count),'active_count':active,'initialization_ms':init_ms,'warmup_ms':warmup_ms,
+        'warmup_frame_ms':warmup_frame_ms,
         'frame_ms':frame_ms,'mean_ms':float(a.mean()),'median_ms':float(np.median(a)),
         'p95_ms':float(np.percentile(a,95)),'max_ms':float(a.max()),'completed_solver_fps':1000/float(a.mean()),
         'physical_time_start':physical_start,'physical_time_end':physical_end,

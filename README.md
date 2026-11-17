@@ -12,6 +12,8 @@ Use the Astro Collision controls in the 3D View sidebar to author sources, previ
 
 See [historical qualification](docs/QUALIFICATION.md) and [publication provenance](docs/PUBLICATION.md). CPU tests: `python -m pytest -q`; the complete suite requires NumPy, pytest and separately installed Warp 1.18.0. Native scripts under `validation/` and `tests/validation/` require Blender and appropriate hardware. Machine-specific launchers and private historical reports are deliberately excluded from this publication.
 
+For reproducible main/candidate CUDA solver comparisons, see the [paired benchmark instructions](validation/PAIRED_SOLVER_BENCHMARK.md). Solver timing and live viewport cadence are separate measurements.
+
 This candidate adds editable Galaxy tree depth, opt-in compact node storage, corrected shaded-sphere depth, and clearer isolation status. Controls are in **AstroCollide > Simulation**; physical edits rebuild from authored initial conditions. See the [user guide](docs/USER_GUIDE.md) and [simulation API](docs/SIMULATION_API.md). Existing standalone packages are retained, including the shared renderer correction. These changes do not promote the historical qualification to a new release or establish the 24 updates/s performance target.
 
 ## Reusable packages
