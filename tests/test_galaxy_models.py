@@ -4,6 +4,27 @@ from astro_collision_lab.simulation import BodySpec, SimulationConfig
 from astro_collision_lab import galaxy_models as gm
 
 
+def test_grouped_sampling_preserves_rng_assignment_across_empty_bins():
+    bins = np.array([5, 2, 5, 0, 2, 5, 0])
+    groups = [(k, indices.tolist()) for k, indices in gm._bin_groups(bins, 9, np)]
+    assert groups == [(0, [3, 6]), (2, [1, 4]), (5, [0, 2, 5])]
+
+
+def test_reflected_disk_force_matches_full_azimuth_quadrature():
+    disk = BodySpec('disk', kind='DISK', radius=3., scale_length=.7, thickness=.04)
+    grid, curve = gm.circular_curve(disk, (disk,), 1., .012, np)
+    edges = np.linspace(0, disk.radius, 161)
+    ring = ((edges[1:] + edges[:-1]) * .5)[:, None]
+    mass = np.diff(gm.enclosed(disk, edges, np))[:, None]
+    phi = (np.arange(128) + .5) * 2 * np.pi / 128
+    for index in (0, 75, 150, 225, 299):
+        radius = grid[index]
+        dx = radius - ring * np.cos(phi)
+        d2 = dx**2 + (ring * np.sin(phi))**2 + .012**2 + (.35 * disk.thickness)**2
+        expected = max(0., radius * np.sum(mass * dx / d2**1.5) / 128)
+        np.testing.assert_allclose(curve[index], expected, rtol=1e-12, atol=1e-14)
+
+
 def test_plummer_has_concentrated_profile_and_bound_distribution():
     body = BodySpec('halo', kind='HALO', particle_count=30000, radius=10., scale_length=1., galaxy_id='one')
     p,v,m,h = gm.sample((body,), SimulationConfig(particle_count=30000), np)[0]

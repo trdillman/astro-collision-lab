@@ -39,15 +39,30 @@ def circular_curve(spec, group, G, eps, np):
         else:
             # Axisymmetric annular quadrature; finite thickness softens ring force.
             edges=np.linspace(0,s.radius,161); rr=(edges[1:]+edges[:-1])*.5
-            mass=np.diff(enclosed(s,edges,np)); phi=(np.arange(128)+.5)*2*np.pi/128
-            x=rr[:,None]*np.cos(phi);y=rr[:,None]*np.sin(phi)
+            # Reflected azimuths have identical radial force. Each of the 64
+            # midpoint samples below represents its pair in the 128-point rule.
+            mass=np.diff(enclosed(s,edges,np)); phi=(np.arange(64)+.5)*2*np.pi/128
+            x=rr[:,None]*np.cos(phi)
+            transverse2=(rr[:,None]*np.sin(phi))**2+eps*eps+(s.thickness*.35)**2
             for i,r in enumerate(grid):
                 dx=r-x
-                force[i]+=G*np.sum(mass[:,None]*dx/(dx*dx+y*y+eps*eps+(s.thickness*.35)**2)**1.5)/128
+                distance2=dx*dx+transverse2
+                force[i]+=G*np.sum(mass[:,None]*dx/(distance2*np.sqrt(distance2)))/64
     curve=(grid,np.maximum(force*grid,0.))
     if len(_CURVE_CACHE)>=64:_CURVE_CACHE.pop(next(iter(_CURVE_CACHE)))
     _CURVE_CACHE[key]=curve
     return curve
+
+
+def _bin_groups(bins, count, np):
+    """Group particle indices once, retaining the original RNG order within each bin."""
+    order = np.argsort(bins, kind="stable")
+    ends = np.cumsum(np.bincount(bins, minlength=count))
+    start = 0
+    for index, end in enumerate(ends):
+        if end > start:
+            yield index, order[start:end]
+        start = end
 
 
 def vertical_dispersion(spec,group,r,z,grid,surface,G,eps,np):
@@ -73,8 +88,8 @@ def vertical_dispersion(spec,group,r,z,grid,surface,G,eps,np):
     integral[:,:-1]=np.cumsum(((f[:,1:]+f[:,:-1])*.5*np.diff(height)[None,:])[:,::-1],axis=1)[:,::-1]
     sigma2=integral/density[None,:]
     bins=np.clip(np.searchsorted(grid,r),0,len(grid)-1);out=np.empty(len(r))
-    for k in np.unique(bins):
-        ix=np.flatnonzero(bins==k);out[ix]=np.interp(abs(z[ix])/z0,u,sigma2[k])
+    for k, ix in _bin_groups(bins, len(grid), np):
+        out[ix]=np.interp(abs(z[ix])/z0,u,sigma2[k])
     return np.sqrt(np.maximum(out,0))
 
 
@@ -106,15 +121,15 @@ def eddington_speeds(spec,group,r,rng,G,eps,np):
     # incompatible density/potential pair as an equilibrium candidate.
     if np.min(df)<-.01*np.max(df):raise ValueError('Density profiles do not admit a positive isotropic DF; adjust component scales/masses')
     df=np.maximum(df,0)
-    rb=np.geomspace(max(min(r)*.99,a*1e-5),max(r)*1.01,256)
+    rb=np.geomspace(max(r.min()*.99,a*1e-5),r.max()*1.01,256)
     pp=np.interp(rb,grid,psi);q=np.linspace(0,1,512)
     prob=q[None,:]**2*np.interp(pp[:,None]*(1-q*q),energy,df)
     cdf=np.cumsum((prob[:,1:]+prob[:,:-1])*.5*np.diff(q),axis=1)
     cdf=np.column_stack((np.zeros(len(rb)),cdf));cdf/=cdf[:,-1,None]
     bins=np.clip(np.searchsorted(rb,r)-1,0,len(rb)-1)
     out=np.empty(len(r))
-    for k in np.unique(bins):
-        ix=np.flatnonzero(bins==k);out[ix]=np.interp(rng.random(len(ix)),cdf[k],q)
+    for k, ix in _bin_groups(bins, len(rb), np):
+        out[ix]=np.interp(rng.random(len(ix)),cdf[k],q)
     return out*np.sqrt(2*np.interp(r,grid,psi))
 
 
