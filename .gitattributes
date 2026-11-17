@@ -1,5 +1,7 @@
 # Runtime fingerprints must survive Windows checkouts unchanged.
 extension/** text eol=lf
+# Shared package modules must match the add-on byte for byte on Windows too.
+packages/** text=auto eol=lf
 # Preserve captured evidence and historical patches byte for byte.
 docs/evidence/** -text
 docs/*.patch -text
