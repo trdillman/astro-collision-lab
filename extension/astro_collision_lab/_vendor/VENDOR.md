@@ -43,3 +43,10 @@ Astro Warp was not re-vendored. Only the vendored Warp version constants were up
 `product/model.py` (`DeviceDescriptor.required_warp_version`). The existing runtime version
 checks (`warp_version_compatible`) are already a same-major, minor-floor comparison and were
 left unchanged.
+
+## Galaxy binding order optimization
+
+The local `product/tree.py` patch materializes the existing checkpoint binding order
+with NumPy for signed int64 arrays and caches the strict order check at body load.
+The add-on uses that check to select stable Morton radix sorting. Other input
+representations retain the original integer conversion.

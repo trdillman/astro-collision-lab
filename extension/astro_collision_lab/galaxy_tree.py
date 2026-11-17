@@ -1,6 +1,5 @@
 """Stable Morton radix sorting for the add-on's ordered galaxy particle IDs."""
 from dataclasses import replace
-from itertools import pairwise
 
 from ._vendor.astro_warp.product.tree import BarnesHutRuntime
 
@@ -31,9 +30,7 @@ class RadixTreeRuntime(BarnesHutRuntime):
         arrays = self._arrays
         wp = self._require_wp()
         device = self.device_context.device
-        if "radix_keys" not in arrays and all(
-            a < b for a, b in pairwise(self._stable_id_order)
-        ):
+        if "radix_keys" not in arrays and self._stable_ids_increasing:
             keys = wp.zeros(2 * self._sort_size, dtype=wp.int64, device=device)
             indices = wp.zeros(2 * self._sort_size, dtype=wp.int32, device=device)
             # Prime Warp's device-sort workspace outside CUDA graph capture.

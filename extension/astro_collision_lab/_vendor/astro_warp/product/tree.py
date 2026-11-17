@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass, replace
+from itertools import pairwise
 from typing import Any
 
 from .broadphase import (
@@ -268,6 +269,7 @@ class BarnesHutRuntime:
         # ADR 0226: the last complete tree's report counters (diag slots 0, 1, 5, 6).
         self._tree_report: tuple[int, int, int, int] | None = None
         self._stable_id_order: tuple[int, ...] = ()
+        self._stable_ids_increasing = True
         self._frame_primitive_started_at: float | None = None
         self._frame_primitive_cursor = 0
         self.last_frame_primitive_phase = ""
@@ -435,7 +437,14 @@ class BarnesHutRuntime:
         radii = np.zeros(self.config.capacity, dtype=state_dtype)
         active = np.zeros(self.config.capacity, dtype=np.int32)
         stable_ids = np.zeros(self.config.capacity, dtype=np.int64)
-        self._stable_id_order = tuple(int(value) for value in bodies.stable_ids)
+        binding_ids = bodies.stable_ids
+        if (type(binding_ids) is np.ndarray and binding_ids.dtype == np.int64
+                and binding_ids.ndim == 1):
+            self._stable_id_order = tuple(binding_ids.tolist())
+            self._stable_ids_increasing = bool(np.all(binding_ids[1:] > binding_ids[:-1]))
+        else:
+            self._stable_id_order = tuple(int(value) for value in binding_ids)
+            self._stable_ids_increasing = all(a < b for a, b in pairwise(self._stable_id_order))
         positions[:count] = bodies.positions
         velocities[:count] = bodies.velocities
         masses[:count] = bodies.masses

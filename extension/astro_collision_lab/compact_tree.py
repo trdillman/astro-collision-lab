@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import replace
-from itertools import pairwise
 from types import SimpleNamespace
 
 from ._vendor.astro_warp.product.tree import (
@@ -72,7 +71,7 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
         # The classification buffer is idle during sorting. Warp requires two
         # int64 keys and two int32 indices per padded slot (six int32 words).
         self._compact_radix = (self.config.count * self.config.max_depth >= 6 * self._sort_size
-                               and all(a < b for a, b in pairwise(self._stable_id_order)))
+                               and self._stable_ids_increasing)
         super().rebuild_tree()
 
     def _record_bounds_sort(self):
