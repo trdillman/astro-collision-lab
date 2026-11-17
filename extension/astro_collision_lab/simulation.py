@@ -333,12 +333,12 @@ class AstroCollisionSimulation:
         mode = self.config.mode.upper()
         cfg = self.config
         if mode == "GALAXY":
-            from ._vendor.astro_warp.product.tree import BarnesHutRuntime
             if cfg.tree_storage == 'COMPACT':
                 from .compact_tree import CompactBarnesHutRuntime
                 runtime_class = CompactBarnesHutRuntime
             else:
-                runtime_class = BarnesHutRuntime
+                from .galaxy_tree import GalaxyTreeRuntime
+                runtime_class = GalaxyTreeRuntime
             runtime = runtime_class(context, galaxy_tree_config(cfg))
             self.runtime = runtime
             runtime.load_bodies(prepared.bodies)
