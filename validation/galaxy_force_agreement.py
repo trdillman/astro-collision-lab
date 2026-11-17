@@ -6,6 +6,8 @@ as the second. Use the same extension and dependency environment as that probe.
 import json
 import os
 import sys
+from contextlib import ExitStack
+from unittest.mock import patch
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,6 +18,8 @@ sys.path.insert(0, os.environ["ACL_PROFILE_EXTENSION"])
 import warp as wp
 
 from astro_collision_lab._vendor.astro_warp.product import tree
+from astro_collision_lab.compact_tree import CompactBarnesHutRuntime
+from astro_collision_lab.galaxy_layout import make_fill_nodes
 from astro_collision_lab.galaxy_walk import tree_acceleration_walk
 from astro_collision_lab.simulation import AstroCollisionSimulation, BodySpec, SimulationConfig
 
@@ -25,19 +29,9 @@ def check(sim):
     kernels = runtime._require_kernels()
     assert kernels.tree_acceleration_walk is tree_acceleration_walk
     reference = tree._kernels(wp, runtime.config.precision)
-    graphs = {}
-    block = runtime.walk_block_dim
-    try:
-        for label, kernel, threads in (("candidate", tree_acceleration_walk, block),
-                                       ("reference", reference.tree_acceleration_walk, None)):
-            runtime._kernels = replace(kernels, tree_acceleration_walk=kernel)
-            runtime.walk_block_dim = threads
-            with wp.ScopedCapture(device=runtime.device_context.device) as capture:
-                runtime._record_accelerations()
-            graphs[label] = capture.graph
-    finally:
-        runtime._kernels = kernels
-        runtime.walk_block_dim = block
+    compact = isinstance(runtime, CompactBarnesHutRuntime)
+    if compact:
+        reference_fill = make_fill_nodes(wp, runtime.config.precision, compact=True, use_cutoff=False)
     results = []
     for step in range(121):
         if step in (0, 1, 8, 32, 64, 120):
@@ -45,7 +39,18 @@ def check(sim):
             counts = {}
             # Restore candidate accelerations last, for the next integration step.
             for label in ("reference", "candidate"):
-                wp.capture_launch(graphs[label])
+                # Rebind current buffers after any occupancy growth.
+                with ExitStack() as bindings:
+                    if label == "reference":
+                        bindings.enter_context(patch.object(runtime, "_kernels", replace(
+                            kernels, tree_acceleration_walk=reference.tree_acceleration_walk)))
+                        bindings.enter_context(patch.object(runtime, "walk_block_dim", None))
+                        if compact:
+                            bindings.enter_context(patch.object(runtime._require_compact(),
+                                                               "fill_walk_nodes", reference_fill))
+                        else:
+                            bindings.enter_context(patch.object(runtime, "_strided_fill", None))
+                    runtime._record_accelerations()
                 forces[label] = runtime._arrays["accelerations"].numpy().astype(np.float64)
                 flags = runtime._arrays["diag"].numpy()
                 assert flags[3] == flags[7] == 0

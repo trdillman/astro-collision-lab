@@ -57,13 +57,26 @@ class RadixTreeRuntime(BarnesHutRuntime):
 def configure_galaxy_walk(runtime):
     wp = runtime._require_wp()
     if runtime.config.precision.value == "float32" and wp.get_device(runtime.device_context.device).is_cuda:
-        from .galaxy_walk import tree_acceleration_walk
-        if runtime._kernels.tree_acceleration_walk is not tree_acceleration_walk:
-            runtime._kernels = replace(runtime._kernels, tree_acceleration_walk=tree_acceleration_walk)
+        from .galaxy_walk import tree_acceleration_walk as walk
+        if runtime._kernels.tree_acceleration_walk is not walk:
+            runtime._kernels = replace(runtime._kernels, tree_acceleration_walk=walk)
             runtime.walk_block_dim = 128
+        return True
+    return False
 
 
 class GalaxyTreeRuntime(RadixTreeRuntime):
+    _strided_fill = None
+
     def rebuild_tree(self):
-        configure_galaxy_walk(self)
+        if configure_galaxy_walk(self) and self._strided_fill is None:
+            from .galaxy_layout import make_fill_nodes
+            self._strided_fill = make_fill_nodes(self._require_wp(), self.config.precision,
+                                                  compact=False, use_cutoff=True)
         super().rebuild_tree()
+
+    def _record_walk(self, output="accelerations"):
+        if self._strided_fill is None:
+            return super()._record_walk(output)
+        from .galaxy_layout import record_walk
+        record_walk(self, self._require_kernels().prepare_walk_slots, self._strided_fill, None, output)

@@ -1,7 +1,7 @@
 """Compare the CUDA walk with a previous float32 kernel on identical tree inputs.
 
 Run under gated Blender with the galaxy_scene_profile environment and pass
--- <previous galaxy_walk.py> <output.json>. Only the force kernel is replaced.
+-- <previous galaxy_walk.py> <output.json>. Each kernel receives its corresponding cell representation.
 """
 import importlib.util
 import json
@@ -23,7 +23,7 @@ from astro_collision_lab.galaxy_tree import GalaxyTreeRuntime
 from astro_collision_lab.galaxy_walk import tree_acceleration_walk
 
 
-def check(reference, count, inactive, damage):
+def check(reference, reference_uses_cutoff, count, inactive, damage):
     context = DeviceContext()
     config = BarnesHutConfig(count=count, capacity=count, dt=.001,
                              gravitational_constant=1., softening=.03)
@@ -46,20 +46,21 @@ def check(reference, count, inactive, damage):
             else:
                 launch(kernel, *args, **kwargs)
 
-        with patch.object(wp, "launch", build_layout):
-            runtime._record_walk()
-        assert arguments["block_dim"] == runtime.walk_block_dim
-        arrays = runtime._arrays
-        if damage:
-            links = arrays["walk_links"].numpy()
-            used = int(arrays["walk_offsets"].numpy()[count])
-            # Corrupt one deep cell so some targets fail while others finish.
-            deep = np.flatnonzero((links[:used, 3] >> 24) >= 5)
-            links[deep[len(deep)//2], 3] = -1
-            arrays["walk_links"].assign(links)
         outputs = []
         poison = np.full_like(p, 91234.)
         for kernel in (reference, tree_acceleration_walk):
+            fill = runtime._strided_fill if kernel is tree_acceleration_walk or reference_uses_cutoff else None
+            with patch.object(wp, "launch", build_layout), patch.object(runtime, "_strided_fill", fill):
+                runtime._record_walk()
+            assert arguments["block_dim"] == runtime.walk_block_dim
+            arrays = runtime._arrays
+            if damage:
+                links = arrays["walk_links"].numpy()
+                used = int(arrays["walk_offsets"].numpy()[count])
+                # Corrupt one deep cell so some targets fail while others finish.
+                deep = np.flatnonzero((links[:used, 3] >> 24) >= 5)
+                links[deep[len(deep)//2], 3] = -1
+                arrays["walk_links"].assign(links)
             arrays["accelerations"].assign(poison)
             arrays["diag"].zero_()
             launch(kernel, **arguments)
@@ -90,5 +91,5 @@ if __name__ == "__main__":
     cases = [(1, 0, False), (31, 0, False), (32, 0, False), (33, 0, False),
              (63, 5, False), (65, 65, False), (4097, 1, True),
              (100003, 7, False), (400000, 0, False)]
-    output.write_text(json.dumps([check(module.tree_acceleration_walk, *case) for case in cases],
+    output.write_text(json.dumps([check(module.tree_acceleration_walk, hasattr(module, "opening_cutoff"), *case) for case in cases],
                                  indent=2))

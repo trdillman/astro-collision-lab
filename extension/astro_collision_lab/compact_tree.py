@@ -19,6 +19,7 @@ from ._vendor.astro_warp.product.tree import (
     BarnesHutConfig, BarnesHutRuntime, MAX_TREE_NODES, _quad_dtype,
 )
 from ._vendor.astro_warp.product.nbody import Precision, _dtypes, _registrars
+from .galaxy_layout import make_fill_nodes, record_walk
 from .galaxy_tree import configure_galaxy_walk, record_radix_sort
 
 
@@ -95,7 +96,9 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
 
     def _require_compact(self):
         if self._compact_kernels is None:
-            self._compact_kernels = _compact_kernels(self._require_wp(), self.config.precision)
+            wp = self._require_wp()
+            use_cutoff = self.config.precision.value == 'float32' and wp.get_device(self.device_context.device).is_cuda
+            self._compact_kernels = _compact_kernels(wp, self.config.precision, use_cutoff)
         return self._compact_kernels
 
     def storage_status(self):
@@ -225,126 +228,16 @@ class CompactBarnesHutRuntime(BarnesHutRuntime):
                   device=self.device_context.device)
 
 
-    def _record_walk(self, output: str = "accelerations") -> None:
-        """ADR 0132: lay the tree out depth-first, then walk it with no stack."""
+    def _record_walk(self, output="accelerations"):
+        layout = self._require_compact()
+        record_walk(self, layout.prepare_walk_slots, layout.fill_walk_nodes, self._arrays["slot_nodes"], output)
 
-        wp = self._require_wp()
-        kernels = self._require_kernels()
-        compact = self._require_compact()
-        device = self.device_context.device
-        count = self.config.count
-        arrays = self._arrays
-        wp.launch(
-            compact.prepare_walk_slots,
-            dim=count,
-            inputs=[
-                arrays["positions"],
-                self._tree_masses,
-                arrays["active"],
-                arrays["sorted_keys"],
-                arrays["sorted_indices"],
-                count,
-                self.config.max_depth,
-                arrays["bounds"],
-                arrays["node_count"],
-                self.config.leaf_capacity,
-                self._total_nodes,
-                arrays["walk_bodies"],
-                arrays["walk_first_level"],
-                arrays["walk_node_counts"],
-                arrays["slot_nodes"],
-            ],
-            device=device,
-        )
-        wp.launch(
-            kernels.total_walk_chunks,
-            dim=self._walk_chunks,
-            inputs=[
-                arrays["walk_node_counts"],
-                count,
-                self._walk_chunk,
-                arrays["walk_chunk_totals"],
-            ],
-            device=device,
-        )
-        wp.launch(
-            kernels.offset_walk_slots,
-            dim=self._walk_chunks,
-            inputs=[
-                arrays["walk_node_counts"],
-                count,
-                self._walk_chunk,
-                arrays["walk_chunk_totals"],
-                arrays["walk_offsets"],
-            ],
-            device=device,
-        )
-        wp.launch(
-            compact.fill_walk_nodes,
-            dim=count,
-            inputs=[
-                count,
-                self.config.max_depth,
-                self._total_nodes,
-                self._total_nodes,
-                arrays["walk_first_level"],
-                arrays["walk_offsets"],
-                arrays["node_mass"],
-                arrays["node_moment_x"],
-                arrays["node_moment_y"],
-                arrays["node_moment_z"],
-                arrays["node_qxx"],
-                arrays["node_qxy"],
-                arrays["node_qxz"],
-                arrays["node_qyy"],
-                arrays["node_qyz"],
-                arrays["node_qzz"],
-                arrays["node_count"],
-                arrays["node_end"],
-                arrays["sorted_keys"],
-                arrays["bounds"],
-                self.config.theta,
-                arrays["walk_links"],
-                arrays["walk_cells"],
-                arrays["walk_mass_diagonal"],
-                arrays["walk_off_diagonal"],
-                arrays["diag"],
-                arrays["slot_nodes"],
-            ],
-            device=device,
-        )
-        wp.launch(
-            kernels.tree_acceleration_walk,
-            dim=count,
-            block_dim=self.walk_block_dim,
-            inputs=[
-                arrays["sorted_indices"],
-                count,
-                self.config.gravitational_constant,
-                self.config.softening,
-                self.config.theta,
-                self.config.max_depth,
-                self.config.leaf_capacity,
-                self._total_nodes,
-                int(self.config.quadrupoles),
-                arrays["walk_bodies"],
-                arrays["walk_offsets"],
-                arrays["walk_links"],
-                arrays["walk_cells"],
-                arrays["walk_mass_diagonal"],
-                arrays["walk_off_diagonal"],
-                arrays[output],
-                arrays["diag"],
-            ],
-            device=device,
-        )
 
-def _compact_kernels(wp, precision):
+def _compact_kernels(wp, precision, use_cutoff=False):
     scalar, vector, _ = _dtypes(wp, precision)
     quad = _quad_dtype(wp, precision)
     warp_kernel, warp_func = _registrars(wp, scalar, vector, quad=quad)
     zero = scalar(0.0)
-    half_one = scalar(0.5)
     sentinel = wp.int64(9223372036854775807)
 
     @warp_func
@@ -721,109 +614,7 @@ def _compact_kernels(wp, precision):
         walk_first_level[slot] = first
         walk_node_counts[slot] = emitted
 
-    @warp_kernel
-    def fill_walk_nodes(
-        count: int,
-        max_depth: int,
-        node_capacity: int,
-        walk_capacity: int,
-        walk_first_level: wp.array(dtype=wp.int32),
-        walk_offsets: wp.array(dtype=wp.int32),
-        node_mass: wp.array(dtype=scalar),
-        moment_x: wp.array(dtype=scalar),
-        moment_y: wp.array(dtype=scalar),
-        moment_z: wp.array(dtype=scalar),
-        qxx: wp.array(dtype=scalar),
-        qxy: wp.array(dtype=scalar),
-        qxz: wp.array(dtype=scalar),
-        qyy: wp.array(dtype=scalar),
-        qyz: wp.array(dtype=scalar),
-        qzz: wp.array(dtype=scalar),
-        node_count: wp.array(dtype=wp.int32),
-        node_end: wp.array(dtype=wp.int32),
-        sorted_keys: wp.array(dtype=wp.int64),
-        bounds: wp.array(dtype=scalar),
-        theta: scalar,
-        walk_links: wp.array(dtype=wp.vec4i),
-        walk_cells: wp.array(dtype=quad),
-        walk_mass_diagonal: wp.array(dtype=quad),
-        walk_off_diagonal: wp.array(dtype=vector),
-        diag: wp.array(dtype=wp.int64),
-        slot_nodes: wp.array(dtype=wp.int32),
-    ):
-        # One writer per entry: slot s writes exactly the nodes it starts.
-        slot = wp.tid()
-        if slot >= count:
-            return
-        first = walk_first_level[slot]
-        base = walk_offsets[slot]
-        # ADR 0228: the slot's run of reachable levels; it may stop above max_depth.
-        last = first + (walk_offsets[slot + 1] - base) - 1
-        # ADR 0226: the nodes a slot starts are the ancestors of its own body, so one descent
-        # along the slot's key gives every one of their geometric centres in O(depth), where
-        # rebuilding each from its prefix cost O(level) per node. The same halvings and
-        # signed steps run in the same order, so each centre is the same number to the bit.
-        key = sorted_keys[slot]
-        center = vector(
-            (bounds[0] + bounds[3]) * half_one,
-            (bounds[1] + bounds[4]) * half_one,
-            (bounds[2] + bounds[5]) * half_one,
-        )
-        half = (bounds[3] - bounds[0]) * half_one
-        for level in range(0, max_depth + 1):
-            if level > last:
-                break
-            if level > 0:
-                shift = wp.int64(3 * (max_depth - level))
-                child_code = wp.int32((key >> shift) & wp.int64(7))
-                half *= half_one
-                if (child_code & 1) != 0:
-                    center[0] += half
-                else:
-                    center[0] -= half
-                if (child_code & 2) != 0:
-                    center[1] += half
-                else:
-                    center[1] -= half
-                if (child_code & 4) != 0:
-                    center[2] += half
-                else:
-                    center[2] -= half
-            if level < first:
-                continue
-            entry = base + level - first
-            if entry >= walk_capacity:
-                wp.atomic_max(diag, 3, wp.int64(1))
-            else:
-                node = wp.int32(0)
-                if level > 0:
-                    node = slot_nodes[level * count + slot]
-                if node < 0 or node >= node_capacity:
-                    # A node the topology could not allocate; `build_sparse_topology` has
-                    # already raised diag[7]. A walk that reaches it fails closed.
-                    walk_links[entry] = wp.vec4i(slot, slot, entry + 1, -1)
-                else:
-                    end = node_end[node]
-                    mass = node_mass[node]
-                    walk_links[entry] = wp.vec4i(
-                        slot,
-                        end,
-                        walk_offsets[end + 1],
-                        node_count[node] | (level << 24),
-                    )
-                    com = vector(
-                        moment_x[node] / mass,
-                        moment_y[node] / mass,
-                        moment_z[node] / mass,
-                    )
-                    # ADR 0147: a cell reaches as far as its edge plus theta times the offset
-                    # of its mass from its centre (Barnes 1994), so a body just outside a cell
-                    # whose mass sits on the far side still opens it.
-                    reach = (half + half) + theta * wp.length(com - center)
-                    walk_cells[entry] = quad(com[0], com[1], com[2], reach)
-                    walk_mass_diagonal[entry] = quad(mass, qxx[node], qyy[node], qzz[node])
-                    walk_off_diagonal[entry] = vector(qxy[node], qxz[node], qyz[node])
-
+    fill_walk_nodes = make_fill_nodes(wp, precision, compact=True, use_cutoff=use_cutoff)
     return SimpleNamespace(classify=classify, build=build, prune_mapping=prune_mapping, collect_diag=collect_diag,
                            leaf_moments=leaf_moments, reduce_moments=reduce_moments,
                            prepare_walk_slots=prepare_walk_slots, fill_walk_nodes=fill_walk_nodes)

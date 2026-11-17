@@ -3,7 +3,7 @@
 Derived from astro_warp/product/tree.py at e5ebdc970a3633bc61cfe8909e28923f97ca2cfc.
 SPDX-License-Identifier: LicenseRef-Private-Internal
 
-The opening test uses the reference distance. Once an interaction is selected,
+Cell packing precomputes the exact rounded opening boundary. Once an interaction is selected,
 evaluate its inverse distance with the single-precision CUDA reciprocal square root.
 """
 import warp as wp
@@ -45,6 +45,37 @@ return entry;
 #endif
 """)
 def earliest_entry(mask: int, entry: int) -> int:
+    ...
+
+
+@wp.func_native('''
+// Nonnegative IEEE floats have the same ordering as their integer bits.
+// Locate the largest squared distance rejected by the original rounded test.
+int inf_bits = 0x7f800000;
+float inf;
+memcpy(&inf, &inf_bits, sizeof(float));
+if (!(theta > 0.0f) || !(reach >= 0.0f) || reach == inf) return inf;
+float radius = reach / theta;
+float estimate = radius * radius;
+int guess;
+memcpy(&guess, &estimate, sizeof(int));
+int lo = guess > 8 ? guess - 8 : 0;
+int hi = guess < inf_bits - 8 ? guess + 8 : inf_bits;
+float d2;
+memcpy(&d2, &lo, sizeof(float));
+if (lo && reach / sqrtf(d2) < theta) lo = 0;
+memcpy(&d2, &hi, sizeof(float));
+if (!(reach / sqrtf(d2) < theta)) hi = inf_bits;
+while (hi - lo > 1) {
+    int mid = lo + (hi - lo) / 2;
+    memcpy(&d2, &mid, sizeof(float));
+    if (reach / sqrtf(d2) < theta) hi = mid;
+    else lo = mid;
+}
+memcpy(&d2, &lo, sizeof(float));
+return d2;
+''')
+def opening_cutoff(reach: float, theta: float) -> float:
     ...
 
 
@@ -124,10 +155,8 @@ def tree_acceleration_walk(
         cell = walk_cells[entry]
         r = vector(cell[0], cell[1], cell[2]) - p
         d2 = wp.dot(r, r) + softening * softening
-        distance = wp.sqrt(d2)
         contains_target = slot >= start and slot <= end
-        reach = cell[3]
-        if (not contains_target) and reach / distance < theta:
+        if (not contains_target) and d2 > cell[3]:
             moments = walk_mass_diagonal[entry]
             mass = moments[0]
             inv = inverse_root(d2)
