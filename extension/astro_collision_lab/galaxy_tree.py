@@ -5,15 +5,15 @@ from itertools import pairwise
 from ._vendor.astro_warp.product.tree import BarnesHutRuntime
 
 
-class GalaxyTreeRuntime(BarnesHutRuntime):
+class RadixTreeRuntime(BarnesHutRuntime):
     def rebuild_tree(self):
         # load_bodies has installed fresh device arrays here, before graph capture.
         arrays = self._arrays
+        wp = self._require_wp()
+        device = self.device_context.device
         if "radix_keys" not in arrays and all(
             a < b for a, b in pairwise(self._stable_id_order)
         ):
-            wp = self._require_wp()
-            device = self.device_context.device
             keys = wp.zeros(2 * self._sort_size, dtype=wp.int64, device=device)
             indices = wp.zeros(2 * self._sort_size, dtype=wp.int32, device=device)
             # Prime Warp's device-sort workspace outside CUDA graph capture.
@@ -48,3 +48,14 @@ class GalaxyTreeRuntime(BarnesHutRuntime):
         if "radix_keys" in self._arrays:
             return replace(report, sort_algorithm="stable_morton_radix")
         return report
+
+
+class GalaxyTreeRuntime(RadixTreeRuntime):
+    def rebuild_tree(self):
+        wp = self._require_wp()
+        if self.config.precision.value == "float32" and wp.get_device(self.device_context.device).is_cuda:
+            from .galaxy_walk import tree_acceleration_walk
+            if self._kernels.tree_acceleration_walk is not tree_acceleration_walk:
+                self._kernels = replace(self._kernels, tree_acceleration_walk=tree_acceleration_walk)
+                self.walk_block_dim = 512
+        super().rebuild_tree()

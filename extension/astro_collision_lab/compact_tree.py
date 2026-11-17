@@ -3,7 +3,7 @@
 SPDX-License-Identifier: LicenseRef-Private-Internal
 Moment and depth-first walk kernels below are derived from
 astro_warp/product/tree.py, vendor commit e5ebdc970a3633bc61cfe8909e28923f97ca2cfc.
-The original vendor module is unmodified. Force, softening, opening criterion and
+Force, softening, opening criterion and
 integration remain its implementation. This adapter deliberately submits eagerly:
 one scalar occupancy read precedes any pool growth, so no captured graph retains
 an obsolete device pointer and a frame is never integrated twice to retry a build.

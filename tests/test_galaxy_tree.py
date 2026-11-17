@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from astro_collision_lab.galaxy_tree import GalaxyTreeRuntime
+from astro_collision_lab.galaxy_tree import RadixTreeRuntime
 from astro_collision_lab._vendor.astro_warp.product.sampling import BodySet
 from astro_collision_lab._vendor.astro_warp.product.tree import BarnesHutConfig, BarnesHutRuntime
 
@@ -30,7 +30,7 @@ def test_galaxy_sort_preserves_ties_padding_and_trajectory(ordered, device="cpu"
     config = BarnesHutConfig(capacity=n, count=n, gravitational_constant=1.,
                              dt=.0001, softening=.02)
     reference = BarnesHutRuntime(context, config)
-    candidate = GalaxyTreeRuntime(context, config)
+    candidate = RadixTreeRuntime(context, config)
     try:
         for runtime in (reference, candidate):
             runtime.load_bodies(bodies)

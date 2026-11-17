@@ -237,6 +237,8 @@ class BarnesHutDiagnostics:
 class BarnesHutRuntime:
     """Own a GPU linear octree, traversal scratch, and KDK integration state."""
 
+    walk_block_dim: int | None = None
+
     def __init__(self, device_context: DeviceContext, config: BarnesHutConfig) -> None:
         config.validate()
         self.device_context = device_context
@@ -1986,6 +1988,7 @@ class BarnesHutRuntime:
         wp.launch(
             kernels.tree_acceleration_walk,
             dim=count,
+            block_dim=self.walk_block_dim,
             inputs=[
                 arrays["sorted_indices"],
                 count,
