@@ -139,7 +139,7 @@ def _draw():
             # Acceptance measures completion of GL work; normal playback never glFinish-es.
             entry["batch"]._gl._call("glFinish", None, ())
         finished = time.perf_counter()
-        owner.on_presented(owner.revision, sim.count, start, packed, finished)
+        owner.on_presented(owner.revision, sim.count, start, packed, finished, bpy.context.window)
         _ERROR = ""
     except Exception as error:
         _ERROR = f"{type(error).__name__}: {error}"

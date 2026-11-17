@@ -168,6 +168,7 @@ class Controller:
         self.warm_log = None
         self.pending = None
         self.last_presented = None
+        self._playback_timer = None
         self.step_started = None
         self.signature = None
         self.single_step_pending = False
@@ -217,6 +218,8 @@ class Controller:
         viewport.attach(self)
 
     def begin(self, context, *, play=True):
+        if not play:
+            self._release_playback_timer()
         scene = context.scene
         if self.scene is not None and self.scene != scene:
             self.reset()
@@ -377,6 +380,7 @@ class Controller:
 
 
     def fail(self, error):
+        self._release_playback_timer()
         self.error = f"{type(error).__name__}: {error}"
         self.message = "Stopped: " + self.error
         self.playing = False
@@ -395,7 +399,27 @@ class Controller:
         self.revision += 1
         viewport.request_redraw()
 
-    def on_presented(self, revision, count, draw_start, packed, finished):
+    def _wake_for_playback(self, window):
+        # A window event wakes Blender's event loop between GPU presentations.
+        # The application timer alone owns simulation steps and edit reconciliation.
+        if self._playback_timer is not None:
+            manager, previous, _ = self._playback_timer
+            if previous == window or previous in tuple(manager.windows):
+                return
+            # Blender retired the old window along with its event timers.
+            self._playback_timer = None
+        manager = bpy.context.window_manager
+        timer = manager.event_timer_add(1 / 120, window=window)
+        self._playback_timer = (manager, window, timer)
+
+    def _release_playback_timer(self):
+        owned, self._playback_timer = self._playback_timer, None
+        if owned is not None:
+            manager, window, timer = owned
+            if window in tuple(manager.windows):
+                manager.event_timer_remove(timer)
+
+    def on_presented(self, revision, count, draw_start, packed, finished, window=None):
         if revision <= self.presented_revision:
             return
         if revision > 0:
@@ -412,8 +436,11 @@ class Controller:
                 del self.measurements[:1000]
         self.last_presented = finished
         self.presented_revision = revision
+        if self.playing and window is not None:
+            self._wake_for_playback(window)
 
     def reset(self, *, preserve_intent=False):
+        self._release_playback_timer()
         scene, intent = self.scene, self.intent
         self.playing = False
         if self.warming is not None:
@@ -513,6 +540,11 @@ def _stop_validation():
 
 def _tick():
     try:
+        # A hidden viewport cannot consume revisions. Stop generating window
+        # events after a second without a new draw. Presentation rearms them.
+        if (controller._playback_timer is not None and controller.last_presented is not None
+                and time.perf_counter() - controller.last_presented > 1.0):
+            controller._release_playback_timer()
         editor = _editor()
         # A source edit must be reconciled before another old-state step or a
         # warmup result is published, including the short preview throttle.
@@ -592,6 +624,7 @@ def start(context):
 
 
 def pause(context):
+    controller._release_playback_timer()
     editor = _editor()
     if editor is not None:
         editor.pause_restart(None)

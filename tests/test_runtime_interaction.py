@@ -88,6 +88,29 @@ class RuntimeTests(unittest.TestCase):
         self.live();self.editor.is_dirty=lambda s:True
         self.r._tick()
         self.c.simulation.step.assert_not_called()
+    def test_playback_wakes_only_one_window_and_pause_releases_it(self):
+        self.live()
+        first, second = object(), object()
+        manager = Mock(windows=[first, second])
+        self.bpy.context = types.SimpleNamespace(window_manager=manager)
+        self.c.on_presented(4, 10, 1., 1., 1., first)
+        self.c.on_presented(5, 10, 2., 2., 2., second)
+        manager.event_timer_add.assert_called_once_with(1 / 120, window=first)
+        self.r.pause(self.context)
+        self.c.reset()
+        manager.event_timer_remove.assert_called_once_with(manager.event_timer_add.return_value)
+    def test_closed_window_rearms_on_next_presentation(self):
+        self.live()
+        first, second = object(), object()
+        manager = Mock(windows=[first])
+        self.bpy.context = types.SimpleNamespace(window_manager=manager)
+        self.c.on_presented(4, 10, 1., 1., 1., first)
+        manager.windows = [second]
+        self.c.on_presented(5, 10, 2., 2., 2., second)
+        manager.event_timer_remove.assert_not_called()
+        self.assertIs(self.c._playback_timer[1], second)
+        self.c.fail(RuntimeError("failed"))
+        manager.event_timer_remove.assert_called_once()
     def test_failed_simulation_clears_pending_step(self):
         self.live();self.c.intent='STEP';self.c.single_step_pending=True
         self.c.simulation.step.side_effect=RuntimeError('failed health check')
