@@ -8,7 +8,7 @@ evaluate its inverse distance with the single-precision CUDA reciprocal square r
 """
 import warp as wp
 
-wp.set_module_options({"block_dim": 512, "enable_backward": False})
+wp.set_module_options({"block_dim": 128, "enable_backward": False})
 
 scalar = wp.float32
 vector = wp.vec3

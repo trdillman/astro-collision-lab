@@ -60,7 +60,7 @@ def configure_galaxy_walk(runtime):
         from .galaxy_walk import tree_acceleration_walk
         if runtime._kernels.tree_acceleration_walk is not tree_acceleration_walk:
             runtime._kernels = replace(runtime._kernels, tree_acceleration_walk=tree_acceleration_walk)
-            runtime.walk_block_dim = 512
+            runtime.walk_block_dim = 128
 
 
 class GalaxyTreeRuntime(RadixTreeRuntime):
