@@ -1,13 +1,13 @@
 """Untimed full-state diagnostic for impact stability and numerical safeguards."""
-from pathlib import Path
 import json
 import sys
+from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "extension"))
-from solver_probe import probe_scene
-from astro_collision_lab.simulation import AstroCollisionSimulation
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "extension"))
 import numpy as np
 import warp as wp
+from astro_collision_lab.simulation import AstroCollisionSimulation
+from solver_probe import probe_scene
 
 wp.config.log_level = wp.LOG_WARNING
 cfg, bodies = probe_scene("IMPACT", 100000)
@@ -38,8 +38,8 @@ try:
         print(json.dumps(row), flush=True)
         if frame < 6:
             sim.step()
-    out = Path("status/impact-diagnostic.json")
-    out.parent.mkdir(exist_ok=True)
+    out = Path(".local/evidence/impact-diagnostic.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps({"rows": rows, "stats": sim.stats}, indent=2))
 finally:
     sim.close()

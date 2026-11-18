@@ -1,9 +1,16 @@
-﻿import bpy,importlib,json,pathlib,sys,traceback
+﻿import importlib
+import json
+import pathlib
+import sys
+
+import bpy
+
 args=sys.argv[sys.argv.index("--")+1:]
 module_name,mode,phase,blend,report=args
 mod=importlib.import_module(module_name)
 mod.register()
-from bl_ext.acla.astro_collision_lab import runtime,ui
+from bl_ext.acla.astro_collision_lab import runtime
+
 bpy.ops.object.select_all(action="SELECT")
 if phase=="create":
     if bpy.data.objects:bpy.ops.object.delete()

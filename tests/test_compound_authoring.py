@@ -145,7 +145,7 @@ def test_duplicate_component_tag_rejects_before_mutating_existing_children(autho
     duplicate.parent = root
     group.link(duplicate)
     prior = [(id(obj), obj.acl_body.mass, obj.acl_body.particle_count) for obj in root.children]
-    with pytest.raises(ValueError, match='[Dd]uplicate'):
+    with pytest.raises(ValueError, match=r'[Dd]uplicate'):
         authoring.synchronize(scene)
     assert [(id(obj), obj.acl_body.mass, obj.acl_body.particle_count) for obj in root.children] == prior
 
@@ -179,14 +179,14 @@ def test_orphan_tagged_component_cannot_become_silent_standalone_source(authorin
     scene, _group, root = galaxy_fixture(authoring)
     child = root.children[0]
     child.parent = None if parent_type == 'none' else Object('Ordinary parent')
-    with pytest.raises(ValueError, match='[Pp]arent|[Oo]rphan|Galaxy'):
+    with pytest.raises(ValueError, match=r'[Pp]arent|[Oo]rphan|Galaxy'):
         authoring.synchronize(scene)
 
 
 def test_active_child_requires_its_galaxy_root_in_the_same_source_group(authoring):
     scene, group, root = galaxy_fixture(authoring)
     group.unlink(root)
-    with pytest.raises(ValueError, match='[Cc]ollection|[Gg]roup'):
+    with pytest.raises(ValueError, match=r'[Cc]ollection|[Gg]roup'):
         authoring.synchronize(scene)
 
 
@@ -197,7 +197,7 @@ def test_active_root_rejects_child_linked_only_outside_active_group(authoring):
     other = Collection()
     other.link(child)
     scene.collections.append(other)
-    with pytest.raises(ValueError, match='[Cc]ollection|[Gg]roup'):
+    with pytest.raises(ValueError, match=r'[Cc]ollection|[Gg]roup'):
         authoring.synchronize(scene)
 
 
@@ -207,5 +207,5 @@ def test_untagged_enabled_child_cannot_inflate_compound_budget(authoring):
     extra.acl_body = settings(enabled=True, kind='DISK')
     extra.parent = root
     group.link(extra)
-    with pytest.raises(ValueError, match='[Cc]omponent|[Gg]alaxy'):
+    with pytest.raises(ValueError, match=r'[Cc]omponent|[Gg]alaxy'):
         authoring.synchronize(scene)

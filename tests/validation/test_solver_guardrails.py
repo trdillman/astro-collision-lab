@@ -1,6 +1,13 @@
+import sys
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
-from validation import solver_probe
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import pytest
+import solver_probe
+
+pytestmark = pytest.mark.validation
 
 class SolverGuardrailContracts(unittest.TestCase):
     def test_finite_moving_but_truncated_or_clamped_is_not_a_guardrail_pass(self):

@@ -1,0 +1,65 @@
+--- a/extension/astro_collision_lab/_vendor/astro_warp/product/sph_runtime.py
++++ b/extension/astro_collision_lab/_vendor/astro_warp/product/sph_runtime.py
+@@ -224,6 +224,8 @@
+     branch, with the SPH state appended rather than substituted.
+     """
+ 
++    BACKEND = 'sph'
++
+     def __init__(self, device_context: DeviceContext, config: SphProductConfig) -> None:
+         config.validate()
+         self.device_context = device_context
+@@ -349,9 +351,9 @@
+             gravity=gravity_config,
+             solid=solid_config,
+         )
+-        internal_energy = config.internal_energy or _virial_internal_energy(
+-            bodies, config.gravitational_constant, eos.gamma
+-        )
++        internal_energy = (config.internal_energy if config.materials is not None else
++                           config.internal_energy or _virial_internal_energy(
++                               bodies, config.gravitational_constant, eos.gamma))
+         energies = np.full(config.count, internal_energy, dtype=np.float64)
+         # An inactive binding contributes particles that still hold the field they carry but
+         # are never integrated, which is exactly what the stage calls frozen. Dropping them
+@@ -628,7 +630,7 @@
+         solid_state = hydro.capture_solid_state()
+         snapshot: dict[str, Any] = {
+             "schema": CHECKPOINT_SCHEMA_VERSION,
+-            "backend": "sph",
++            "backend": self.BACKEND,
+             "capacity": self.config.count,
+             "count": self.config.count,
+             "collision_mode": "ignore",
+@@ -659,7 +661,7 @@
+     def restore_snapshot(self, snapshot: dict[str, Any]) -> None:
+         if snapshot.get("schema") != CHECKPOINT_SCHEMA_VERSION:
+             raise ValueError("unsupported checkpoint snapshot schema")
+-        if snapshot.get("backend") != "sph":
++        if snapshot.get("backend") != self.BACKEND:
+             raise ValueError("checkpoint backend does not match SPH runtime")
+         if int(snapshot.get("count", -1)) != self.config.count:
+             raise ValueError("snapshot body count does not match runtime")
+--- a/extension/astro_collision_lab/_vendor/astro_warp/product/spacesim_impact_runtime.py
++++ b/extension/astro_collision_lab/_vendor/astro_warp/product/spacesim_impact_runtime.py
+@@ -298,6 +298,9 @@
+     max_outer_steps: int = DEFAULT_MAX_OUTER_STEPS
+     max_inner_steps_per_frame: int = DEFAULT_MAX_INNER_STEPS_PER_FRAME
+     use_graph: bool = True
++    # Lab controls: None preserves the pinned dependency defaults.
++    tree_theta: float | None = None
++    gravity_softening: float | None = None
+ 
+     @property
+     def substeps(self) -> int:
+@@ -641,6 +644,10 @@
+             engine.SpaceSimImpactSettings(),
+             frame_dt=float(self.config.seconds_per_frame),
+             max_outer_steps=int(self.config.max_outer_steps),
++            tree_theta=(engine.SpaceSimImpactSettings().tree_theta if self.config.tree_theta is None
++                        else float(self.config.tree_theta)),
++            softening=(engine.SpaceSimImpactSettings().softening if self.config.gravity_softening is None
++                       else float(self.config.gravity_softening)/layout.spacing),
+         )
+         self.close()
+         solver = engine.SpaceSimImpactSolver(

@@ -8,14 +8,13 @@ the production controller code. Every replaced module is restored after a test.
 import importlib
 import importlib.util
 import json
-from pathlib import Path
 import sys
 import tempfile
 import types
 import unittest
-from unittest.mock import patch
 import uuid
-
+from pathlib import Path
+from unittest.mock import patch
 
 _RUNTIME = (
     Path(__file__).resolve().parents[1]
@@ -84,9 +83,10 @@ class Timers:
 
 
 class Worker:
-    def __init__(self):
+    def __init__(self, args=()):
         self.result = None
         self.terminated = False
+        self.args = args
 
     def poll(self):
         return self.result
@@ -179,7 +179,7 @@ class ControllerBehavior(unittest.TestCase):
         bpy.context = self.context
         bpy.data = types.SimpleNamespace(scenes=[self.scene])
         warp = types.ModuleType("warp")
-        warp.__version__ = "1.15.0"
+        warp.__version__ = "1.18.0"
         warp.__file__ = str(self.root / "warp" / "__init__.py")
         warp.config = types.SimpleNamespace(kernel_cache_dir=None)
         warp.get_device = lambda alias: types.SimpleNamespace(
@@ -213,10 +213,11 @@ class ControllerBehavior(unittest.TestCase):
         self.runtime.subprocess = types.SimpleNamespace(Popen=self._spawn, STDOUT=-2)
         self.controller = self.runtime.controller
         self.addCleanup(self.controller.reset)
+        self.addCleanup(self.runtime.shutdown)
         self._write_ready_receipt()
 
     def _spawn(self, *_args, **_kwargs):
-        worker = Worker()
+        worker = Worker(_args)
         self.workers.append(worker)
         return worker
 
@@ -228,9 +229,9 @@ class ControllerBehavior(unittest.TestCase):
         return self.runtime._tick()
 
     def _write_ready_receipt(self, text=None):
-        config, bodies, _objects = self.runtime.authored_scene(self.scene)
-        identity = self.contract.warmup_identity(
-            signature=self.contract.physical_signature(config, bodies),
+        config, _bodies, _objects = self.runtime.authored_scene(self.scene)
+        identity = self.contract.kernel_identity(
+            config,
             code_fingerprint=self.contract.code_fingerprint(_RUNTIME.parent),
             runtime=self.contract.runtime_identity(self.warp, self.app, self.package_name),
         )
@@ -309,12 +310,9 @@ class ControllerBehavior(unittest.TestCase):
         self.runtime.start(self.context)
         self.scene.active_objects[0].acl_body.mass = 2.5
         self._finish_worker()
-        self.assertIsNone(self.controller.simulation,
-                          "a receipt for old inputs cannot authorize the latest inputs")
-        self.assertEqual(len(self.workers), 2)
-        self._finish_worker()
         self.assertIsNotNone(self.controller.simulation, self.controller.error)
         self.assertEqual(self.controller.simulation.bodies[0].mass, 2.5)
+        self.assertEqual(len(self.workers), 1, "kernel receipt is shared across authored models")
         self.assertTrue(self.controller.playing)
 
     def test_reset_clears_visible_measurements_and_restores_source_visibility(self):
@@ -403,6 +401,68 @@ class ControllerBehavior(unittest.TestCase):
         self._present(1.02)
         self.runtime._tick()
         self.assertEqual(simulation.steps, 2, "queued single-step must be consumed exactly once")
+
+    def test_kernel_worker_uses_bounded_probe_then_initializes_latest_authored_scene_once(self):
+        import dataclasses
+        self._clear_ready_receipts()
+        self.runtime.start(self.context)
+        worker = self.workers[-1]
+        request = __import__("json").loads(Path(worker.args[0][-1]).read_text())
+        self.assertEqual(request["task"], "KERNELS")
+        self.assertLessEqual(request["config"]["particle_count"], 512)
+        self.assertNotEqual(request["bodies"], [dataclasses.asdict(self.runtime.authored_scene(self.scene)[1][0])])
+        self.scene.active_objects[0].acl_body.mass = 2.5
+        self.runtime.start(self.context)
+        self.assertEqual(len(self.workers), 1, "authored edits reuse the in-flight mode kernel probe")
+        self._finish_worker()
+        self.assertIsNotNone(self.controller.simulation)
+        self.assertEqual(len(self.simulations), 1, "the authored scene initializes once in the UI process")
+        self.assertEqual(self.controller.simulation.bodies[0].mass, 2.5)
+
+    def test_isolation_validation_is_an_explicit_galaxy_only_request(self):
+        self._clear_ready_receipts()
+        self.scene.acl_settings.mode = "GALAXY"
+        self.runtime.controller.validate_isolation(self.context)
+        request = __import__("json").loads(Path(self.workers[-1].args[0][-1]).read_text())
+        self.assertEqual(request["task"], "VALIDATE_ISOLATION")
+        self.assertEqual(request["config"]["particle_count"], 100_000)
+        self.assertEqual(request["identity"]["signature"],
+                         self.contract.equilibrium_signature(*self.runtime.authored_scene(self.scene)[:2]))
+        job = self.runtime._VALIDATION_JOB
+        job["marker"].write_text(json.dumps({
+            **self.contract.ready_marker(job["identity"]), "validation": {"pass": True},
+        }), encoding="utf-8")
+        self.workers[-1].result = 0
+        self.runtime._tick_validation()
+        self.assertEqual(self.scene.acl_settings.authoring_status,
+                         "Isolation validation passed for this exact model")
+        self.assertIsNone(self.runtime._VALIDATION_JOB)
+
+    def test_stale_validation_result_does_not_validate_edited_model(self):
+        self.scene.acl_settings.mode = "GALAXY"
+        self.runtime.controller.validate_isolation(self.context)
+        job = self.runtime._VALIDATION_JOB
+        job["marker"].write_text(json.dumps({
+            **self.contract.ready_marker(job["identity"]), "validation": {"pass": True},
+        }), encoding="utf-8")
+        self.workers[-1].result = 0
+        self.scene.active_objects[0].acl_body.mass = 7.0
+        self.runtime._tick_validation()
+        self.assertEqual(self.scene.acl_settings.authoring_status,
+                         "Isolation result stale; current model is not validated")
+        self.assertIsNone(self.runtime._VALIDATION_JOB)
+
+    def test_shutdown_cancels_only_owned_validation_worker_and_closes_log(self):
+        self.scene.acl_settings.mode = "GALAXY"
+        self.runtime.controller.validate_isolation(self.context)
+        job = self.runtime._VALIDATION_JOB
+        worker = self.workers[-1]
+        self.runtime.shutdown()
+        self.assertTrue(worker.terminated)
+        self.assertTrue(job["log"].closed)
+        self.assertIsNone(self.runtime._VALIDATION_JOB)
+        self.runtime._reap_workers()
+        self.assertEqual(self.runtime._RETIRED_WORKERS, [])
 
 
 if __name__ == "__main__":

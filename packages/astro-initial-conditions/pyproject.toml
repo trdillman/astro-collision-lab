@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "astro-initial-conditions"
-version = "0.1.0"
+version = "0.2.0"
 description = "Stable galaxy (Plummer sphere, exponential disk, halo) and planetary-impact starting setups for N-body and SPH codes."
 readme = "README.md"
 requires-python = ">=3.11"

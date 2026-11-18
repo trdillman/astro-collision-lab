@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "warp-cuda-gl"
-version = "0.1.0"
+version = "0.2.0"
 description = "Zero-copy particle display: NVIDIA Warp kernels write straight into a CUDA-registered OpenGL buffer drawn as instanced billboards."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ authors = [{ name = "Tyler Dillman" }]
 dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
-# Tested with Warp 1.15.0 (the add-on's pin). Install the Warp version your project uses.
+# Tested with Warp 1.18.0 (the add-on's pin). Install the Warp version your project uses.
 warp = ["warp-lang>=1.15"]
 test = ["pytest>=8", "warp-lang>=1.15"]
 

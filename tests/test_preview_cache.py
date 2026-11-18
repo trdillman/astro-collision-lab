@@ -1,7 +1,7 @@
 """Full-count local geometry reuse, invalidation, and bounded retention."""
-from dataclasses import replace
 import importlib
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 
 import numpy as np

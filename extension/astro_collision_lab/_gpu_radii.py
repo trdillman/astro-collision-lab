@@ -1,6 +1,7 @@
 """Device-only physical particle radii; imported only after explicit GPU initialization."""
 import warp as wp
 
+
 @wp.kernel
 def _radii32(mass: wp.array(dtype=wp.float32), density: wp.array(dtype=wp.float32),
              radii: wp.array(dtype=wp.float32)):

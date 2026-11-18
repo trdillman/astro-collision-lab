@@ -4,12 +4,11 @@ The fake records the layout commands the production draw code emits; Blender
 RNA declarations are captured at import so callback routing is also exercised.
 """
 import importlib.util
-from pathlib import Path
 import sys
-from types import ModuleType, SimpleNamespace
 import unittest
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
-
 
 PACKAGE = Path(__file__).resolve().parents[1] / 'extension' / 'astro_collision_lab'
 
@@ -67,13 +66,29 @@ class Layout:
 
 
 def body(**overrides):
-    values = dict(enabled=True, is_galaxy=False, native_primitive=True,
-                  is_mesh_proxy=False, kind='DISK', disk_fraction=.2)
+    values = {'enabled': True, 'is_galaxy': False, 'native_primitive': True,
+                  'is_mesh_proxy': False, 'kind': 'DISK', 'disk_fraction': .2}
     values.update(overrides)
     return SimpleNamespace(**values)
 
 
 class UIContractTests(unittest.TestCase):
+    def test_depth_is_an_editable_physical_property_in_galaxy_simulation_panel(self):
+        declaration = self.ui.ACLSceneSettings.__annotations__['tree_max_depth']
+        self.assertEqual((declaration['default'], declaration['min'], declaration['max']), (16, 1, 16))
+        self.assertIs(declaration['update'], self.ui._source_changed)
+        storage = self.ui.ACLSceneSettings.__annotations__['tree_storage']
+        self.assertEqual(storage['default'], 'STRIDED')
+        self.assertIs(storage['update'], self.ui._source_changed)
+        for mode, visible in [('GALAXY', True), ('IMPACT', False), ('COMPRESSIBLE', False)]:
+            layout = Layout()
+            panel = self.ui.ACL_PT_simulation()
+            panel.layout = layout
+            panel.draw(SimpleNamespace(scene=SimpleNamespace(acl_settings=SimpleNamespace(mode=mode))))
+            fields = [event[1] for event in layout.events if event[0] == 'prop']
+            self.assertEqual('tree_max_depth' in fields, visible)
+            self.assertEqual('tree_storage' in fields, visible)
+
     @classmethod
     def setUpClass(cls):
         cls.ui = load_ui()

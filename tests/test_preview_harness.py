@@ -9,7 +9,6 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-
 ROOT=Path(__file__).resolve().parents[1]
 
 
@@ -26,7 +25,7 @@ def functions_from(path, names):
 
 @pytest.fixture
 def helpers():
-    return functions_from(ROOT/'validation/native_gui_v2.py',
+    return functions_from(ROOT/'tests/validation/native_gui_v2.py',
                           ('preview_count','point_control_entries','control_points_match'))
 
 
@@ -37,8 +36,8 @@ def entries():
     for key,count,position in ((11,25000,(2.,-3.,1.)),(22,75000,(-4.,5.,-2.))):
         points=np.zeros((count,3),dtype=np.float64)
         points.setflags(write=False)
-        result[key]=dict(obj=object(),key=f'original-{key}',points=points,batch=object(),
-                         rotation=rotation,position=position)
+        result[key]={'obj': object(),'key': f'original-{key}','points': points,'batch': object(),
+                         'rotation': rotation,'position': position}
     return result
 
 
@@ -55,7 +54,7 @@ def test_controls_preserve_all_vertices_and_use_existing_object_transforms(entri
     controls=helpers.point_control_entries(entries,world_point)
     assert helpers.preview_count(controls)==100000
     assert helpers.control_points_match(controls,world_point)
-    assert not helpers.control_points_match(controls,np.asarray(world_point)+(1.,0.,0.))
+    assert not helpers.control_points_match(controls,np.asarray(world_point)+np.array((1.,0.,0.)))
     for key,entry in controls.items():
         original=entries[key]
         assert entry['obj'] is original['obj']
@@ -81,7 +80,7 @@ def test_controls_reject_invalid_world_points(entries,helpers):
 
 @pytest.fixture
 def negative():
-    path=ROOT/'validation/preview_format_negative_control.py'
+    path=ROOT/'tests/validation/preview_format_negative_control.py'
     spec=importlib.util.spec_from_file_location('acl_preview_negative_test',path)
     module=importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import bpy
 import numpy as np
 
-from .cuda_gl import CudaGLBatch, current_context_key
-from .device_appearance import Appearance, DeviceAppearanceWriter, MATERIAL_PALETTE
+from .cuda_gl import CudaGLBatch, current_context_key, scene_depth_available
+from .device_appearance import MATERIAL_PALETTE, Appearance, DeviceAppearanceWriter
 
 _HANDLE = None
 _OWNER = None
@@ -130,10 +130,12 @@ def _draw():
             entry["version"] = version
         packed = time.perf_counter()
         region, view = bpy.context.region, bpy.context.region_data
+        space = bpy.context.space_data
         entry["batch"].draw(
             sim.count, view_projection=_matrix(view.perspective_matrix),
             view_matrix=_matrix(view.view_matrix), viewport_size=(region.width, region.height),
             min_diameter_px=settings.particle_size_px, shaded=True,blend_mode=settings.blend_mode,
+            scene_depth=scene_depth_available(space.shading.type, space.overlay.show_overlays),
         )
         if owner.measurement_sync:
             # Acceptance measures completion of GL work; normal playback never glFinish-es.
@@ -141,7 +143,7 @@ def _draw():
         finished = time.perf_counter()
         owner.on_presented(owner.revision, sim.count, start, packed, finished)
         _ERROR = ""
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - draw handler must record any failure and fail the owner
         _ERROR = f"{type(error).__name__}: {error}"
         if _OWNER is not None:
             _OWNER.fail(error)

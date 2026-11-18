@@ -4,10 +4,10 @@ This cache is for CPU initial-condition previews only. A caller applies the
 current rigid transform when drawing; neither evolved particles nor solver
 qualification is stored here.
 """
-from collections import OrderedDict
-from dataclasses import replace
 import hashlib
 import json
+from collections import OrderedDict
+from dataclasses import replace
 
 import numpy as np
 

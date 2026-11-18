@@ -5,5 +5,15 @@ __pycache__/
 build/
 artifacts/
 status/
+.local/
+.pytest_cache/
+.ruff_cache/
+# agent dot-folders
+.claude/
+.codex/
+.omp/
+.autonomous/
+graft/
 *.egg-info/
+extension/astro_collision_lab/_build.json
 dist/

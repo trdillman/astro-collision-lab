@@ -106,9 +106,9 @@ class Packing(unittest.TestCase):
         np.testing.assert_allclose(out[1, 4:8], self.m.DEFAULT_RAMP[-1], atol=1e-6)
 
     def test_source_colors_and_metadata_revision_do_not_upload_per_frame(self):
-        metadata = dict(
-            stable_ids=[10, 20], colors=[(0.8, 0.1, 0.2, 0.3), (0.2, 0.3, 0.9, 0.4)], revision=2
-        )
+        metadata = {
+            "stable_ids": [10, 20], "colors": [(0.8, 0.1, 0.2, 0.3), (0.2, 0.3, 0.9, 0.4)], "revision": 2
+        }
         self.writer.set_metadata(**metadata)
         uploads = self.writer.report()["metadata_uploads"]
         self.writer.set_metadata(**metadata)

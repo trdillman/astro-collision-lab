@@ -29,7 +29,8 @@ def test_scene_creation_without_rendered_frames_is_not_ready():
 
 
 def test_bootstrap_ready_alone_cannot_override_unresponsive_window():
-    m=api();clock=[0.];alive=lambda:True
+    m=api();clock=[0.]
+    def alive():return True
     def pause(t):clock[0]+=t
     assert not m.await_ready(lambda:valid(),lambda:False,alive,12,'new',.5,lambda:clock[0],pause)
     assert m.await_ready(lambda:valid(),lambda:True,alive,12,'new',.5,lambda:clock[0],pause)

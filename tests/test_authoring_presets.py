@@ -2,10 +2,9 @@
 
 import importlib.util
 import math
-from pathlib import Path
 import sys
 import unittest
-
+from pathlib import Path
 
 _path = Path(__file__).resolve().parents[1] / "preset_specs.py"
 if not _path.exists():

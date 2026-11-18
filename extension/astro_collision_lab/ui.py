@@ -10,6 +10,7 @@ Do not enable postponed annotations: Blender must evaluate RNA property calls.
 import math
 import threading
 import uuid
+from typing import ClassVar
 
 import bpy
 from bpy.props import (
@@ -20,7 +21,7 @@ from bpy.props import (
     IntProperty,
     PointerProperty,
 )
-from bpy.types import Operator, Panel, PropertyGroup, Menu
+from bpy.types import Menu, Operator, Panel, PropertyGroup
 
 from .preset_specs import galaxy_collision, moon_collision
 
@@ -203,7 +204,7 @@ def _runtime_action(operator, context, action):
         result = getattr(runtime, action)(context)
         if isinstance(result, set) and ("CANCELLED" in result or "FINISHED" in result):
             return result
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - surface any runtime error to the operator report
         operator.report({"ERROR"}, f"{action.replace('_', ' ').title()}: {exc}")
         return {"CANCELLED"}
     return {"FINISHED"}
@@ -216,7 +217,7 @@ def _runtime_status():
         if controller is None:
             return {"state": "Not initialized"}
         return controller.status()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - status panel must show any error instead of raising in draw
         return {"error": str(exc)}
 
 
@@ -350,6 +351,19 @@ class ACLSceneSettings(PropertyGroup):
         name="Gravity constant G", default=1.0, min=0.000001, precision=4,
         description="Gravitational constant in normalized simulation units",
     )
+    tree_max_depth: IntProperty(
+        update=_source_changed, name="Maximum tree depth", default=16, min=1, max=16,
+        description="Maximum galaxy octree subdivision. Lower depths use less tree memory but "
+                    "can make crowded leaves expensive. Editing rebuilds the initial state",
+    )
+    tree_storage: EnumProperty(
+        update=_source_changed, name="Tree storage", default="STRIDED",
+        items=(
+            ("STRIDED", "Reserved", "Original fixed slots per level; captured GPU submission"),
+            ("COMPACT", "Compact", "Allocate occupied reachable nodes and grow reusable buffers; "
+             "synchronized allocation checks, without captured GPU submission"),
+        ),
+    )
     blend_mode: EnumProperty(update=_appearance_changed, name="Particle blending",items=(
         ("OPAQUE","Opaque","Solid point surfaces; source alpha is ignored"),
         ("ALPHA","Alpha","Use source opacity"),
@@ -399,7 +413,7 @@ class ACLSceneSettings(PropertyGroup):
 
 class ACL_OT_install_dependencies(Operator):
     bl_idname="acl.install_dependencies"
-    bl_label="Install certified Warp 1.15.0"
+    bl_label="Install certified Warp 1.18.0"
     def execute(self,context):
         from .dependencies import install
         install()
@@ -417,11 +431,11 @@ class ACLPreferences(bpy.types.AddonPreferences):
 class ACL_OT_add_source(Operator):
     bl_idname="acl.add_source"
     bl_label="Add Astro Primitive"
-    bl_options={"REGISTER","UNDO"}
+    bl_options: ClassVar[set[str]]={"REGISTER","UNDO"}
     kind: EnumProperty(items=tuple((k,n,"") for k,n in (("GALAXY","Galaxy"),("SPHERE","Planet / Impactor"),("DISK","Stellar Disk"),("BULGE","Stellar Bulge"),("HALO","Dark Matter Halo"))))
 
     def execute(self,context):
-        from .authoring import add_galaxy,add_component
+        from .authoring import add_component, add_galaxy
         if self.kind=="GALAXY":
             add_galaxy(context)
             context.scene.acl_settings.mode="GALAXY"
@@ -450,7 +464,7 @@ class ACL_OT_moon_preset(Operator):
     bl_idname = "acl.moon_preset"
     bl_label = "Moon Collision"
     bl_description = "Create a new 100,000-particle impact source group from two spheres"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_options: ClassVar[set[str]] = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -459,7 +473,7 @@ class ACL_OT_moon_preset(Operator):
     def execute(self, context):
         try:
             _author_preset(context, moon_collision())
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - surface any authoring error to the operator report
             self.report({"ERROR"}, f"Could not author impact: {exc}")
             return {"CANCELLED"}
         self.report({"INFO"}, "Authored 100,000 requested particles across two spheres. Edit with G / R / S, then Start.")
@@ -470,7 +484,7 @@ class ACL_OT_galaxy_preset(Operator):
     bl_idname = "acl.galaxy_preset"
     bl_label = "Galaxy Collision"
     bl_description = "Create a new 100,000-particle collisionless source group with two disks and two halos"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_options: ClassVar[set[str]] = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -478,7 +492,7 @@ class ACL_OT_galaxy_preset(Operator):
 
     def execute(self, context):
         try:
-            from .authoring import add_galaxy,_sync_galaxy
+            from .authoring import _sync_galaxy, add_galaxy
             recipe = galaxy_collision()
             c=_new_source_collection(context.scene,recipe.name)
             c["acl_preset"] = "GALAXY"
@@ -507,10 +521,10 @@ class ACL_OT_galaxy_preset(Operator):
                 roots.append(root)
             context.view_layer.update()
             _set_active_sources(context,roots)
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - surface any authoring error to the operator report
             self.report({"ERROR"}, f"Could not author galaxies: {exc}")
             return {"CANCELLED"}
-        self.report({"INFO"}, "Authored 100,000 requested particles across four sources. Preparation will validate each galaxy in isolation.")
+        self.report({"INFO"}, "Authored 100,000 requested particles across four sources. Galaxy isolation is not validated; use Validate Galaxy Isolation to check this model.")
         return {"FINISHED"}
 
 
@@ -518,7 +532,7 @@ class ACL_OT_build_from_selection(Operator):
     bl_idname = "acl.build_from_selection"
     bl_label = "Build From Selection"
     bl_description = "Use selected meshes as bounding-sphere proxies in a new source group; mesh surfaces are not simulated"
-    bl_options = {"REGISTER", "UNDO"}
+    bl_options: ClassVar[set[str]] = {"REGISTER", "UNDO"}
 
     @classmethod
     def poll(cls, context):
@@ -561,11 +575,37 @@ class ACL_OT_start(Operator):
         return _runtime_action(self, context, "start")
 
 
+class ACL_OT_validate_isolation(Operator):
+    bl_idname = "acl.validate_isolation"
+    bl_label = "Validate Galaxy Isolation"
+    bl_description = ("Run the full five-reference-period engineering stability gate on the exact authored model; "
+                      "this can use the GPU for an extended time")
+
+    @classmethod
+    def poll(cls, context):
+        if context.scene is None or context.scene.acl_settings.mode != "GALAXY":
+            return False
+        try:
+            from .runtime import controller
+            return controller.simulation is None and controller.warming is None and not controller.deferred
+        except Exception:  # noqa: BLE001 - poll must never raise
+            return False
+
+    def execute(self, context):
+        from .runtime import controller
+        try:
+            controller.validate_isolation(context)
+        except Exception as exc:  # noqa: BLE001 - surface any validation error to the operator report
+            self.report({"ERROR"}, f"Isolation validation: {exc}")
+            return {"CANCELLED"}
+        return {"FINISHED"}
+
+
 class ACL_OT_balance_sampling(Operator):
     bl_idname="acl.balance_sampling"
     bl_label="Balance Sampling"
     bl_description=("Redistribute the existing particle total over active impact spheres by world volume; changes counts only")
-    bl_options={"REGISTER","UNDO"}
+    bl_options: ClassVar[set[str]]={"REGISTER","UNDO"}
 
     @classmethod
     def poll(cls,context):
@@ -595,7 +635,7 @@ class ACL_OT_balance_sampling(Operator):
                 for obj,count in zip(objects,previous,strict=True):
                     obj.acl_body.particle_count=count
                 raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - surface any balancing error to the operator report
             self.report({"ERROR"},f"Balance Sampling: {exc}")
             return {"CANCELLED"}
         self.report({"INFO"},f"Sampling updated; {total:,} total retained; spacing ratio {ratio:.5f}. Playback rebuilds automatically if active.")
@@ -661,7 +701,7 @@ def _draw_body(layout, context):
             for key in ("thickness", "toomre_q", "rotation_fraction"):
                 physical.prop(body, key)
         layout.label(text="Components inherit root structure and motion")
-        layout.label(text="Physical edits require isolation preparation")
+        layout.label(text="Physical edits rebuild; stability validation is optional")
         return
     physical.prop(body, "kind")
     if context.scene.acl_settings.mode == "GALAXY":
@@ -721,6 +761,7 @@ class ACL_PT_main(Panel):
             layout.operator("acl.balance_sampling", icon="MOD_PARTICLES")
         elif settings.mode == "GALAXY":
             info.label(text="Collisionless gravity; approximate initial state")
+            layout.operator("acl.validate_isolation", icon="CHECKMARK")
         else:
             info.label(text="Experimental condensed-material SPH")
             info.label(text="No vapor or phase-change model")
@@ -731,7 +772,7 @@ class ACL_PT_main(Panel):
         row = layout.row(align=True)
         row.operator("acl.reset", icon="FILE_REFRESH")
         row.operator("acl.step", icon="FRAME_NEXT")
-        layout.label(text="Physical edits rebuild; resume if playing")
+        layout.label(text="Physical edits rebuild; Galaxy stability remains separately validated")
         layout.label(text="Appearance edits redraw immediately")
         layout.label(text=settings.authoring_status)
         _draw_status(layout)
@@ -754,7 +795,15 @@ class ACL_PT_simulation(Panel):
         layout.prop(settings, "theta")
         layout.prop(settings, "softening")
         layout.prop(settings,"seed")
-        if settings.mode=="GALAXY":layout.prop(settings,"substeps")
+        if settings.mode=="GALAXY":
+            layout.prop(settings,"substeps")
+            layout.prop(settings,"tree_max_depth")
+            layout.prop(settings,"tree_storage")
+            status = _runtime_status()
+            solver = status.get('solver', {}) if isinstance(status, dict) else {}
+            storage = solver.get('tree_storage_status', {})
+            if storage:
+                layout.label(text=f"Tree nodes: {storage['actual_nodes']:,} used / {storage['allocated_nodes']:,} allocated")
         else:
             for key in (("shear_modulus","yield_stress","melt_energy") if settings.mode=="IMPACT" else ("bulk_modulus","shear_modulus","yield_stress","melt_energy","specific_internal_energy","courant_number")):
                 layout.prop(settings,key)
@@ -832,6 +881,7 @@ _CLASSES = (
     ACL_OT_galaxy_preset,
     ACL_OT_build_from_selection,
     ACL_OT_start,
+    ACL_OT_validate_isolation,
     ACL_OT_balance_sampling,
     ACL_OT_pause,
     ACL_OT_reset,

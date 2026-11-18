@@ -1,16 +1,31 @@
-# Astro Collision Lab 0.2.1
+# Astro Collision Lab 0.3.0
 
-Windows x64 Blender 5.1 add-on for primitive-based planetary and galaxy collision previews using CUDA and OpenGL. This is an experimental simulation tool; the bounded qualification below is not scientific validation of Moon formation or arbitrary galaxy models.
+Windows x64 Blender 5.1+ add-on for authoring and live-simulating galaxy collisions and planetary (Moon-style) impacts on an NVIDIA GPU, using CUDA and a strict zero-copy CUDA/OpenGL display. It runs 100,000 simulated and displayed particles in real time, and two-galaxy scenes run at up to 800,000 particles with Compact tree storage. This is an experimental simulation tool. The bounded qualification below is not a scientific validation of Moon formation or of arbitrary galaxy models.
 
 ## Build and install
 
-Run `python tools/build.py` to build the slim extension ZIP under `artifacts/`. Install it using Blender Preferences > Get Extensions > Install from Disk, then enable Astro Collision Lab. Warp 1.15.0 is a separately managed dependency; the add-on provides an explicit dependency install action. No runtime wheel or binary is bundled. The verified installation test reused an existing certified Warp installation; it did not test a fresh dependency download or mouse-driven file picker.
+1. Run `python tools/build.py` to build the slim extension ZIP under `artifacts/`.
+2. Install it with Blender Preferences > Get Extensions > Install from Disk, then enable Astro Collision Lab.
+3. In the add-on preferences, press **Install certified Warp 1.18.0**. Warp is a separately managed, hash-pinned dependency, and an interrupted download resumes when you press Install again. The ZIP bundles no runtime wheel or binary.
 
-Use the Astro Collision controls in the 3D View sidebar to author sources, preview, Play, Pause, Single Step and Reset. Physical edits rebuild the simulation; appearance edits preserve its state.
+Use the AstroCollide sidebar in the 3D View: choose **Galaxy Collision** or **Moon Collision**, or add sources with Shift+A > Astro Collision Lab. Move, rotate and scale sources with G / R / S, then press **Start**. Pause, Single Step and Reset work at any time, including while kernels compile.
+
+- Appearance edits apply instantly and never restart physics.
+- Physical edits rebuild from the edited starting state and resume.
+- **Validate Galaxy Isolation** runs the five-orbit stability gate on the exact model.
+- **Tree storage > Compact** enables the large-scene Galaxy solver.
+
+## What's new in 0.3.0
+
+- **800K Galaxy real time.** Compact tree storage uses a stable radix sort and a warp-converged tree walk, both exact against the vendored solver. An 800K step dropped from 68.5 ms to 21.7 ms.
+- **Thick-disk isolation.** Thick-disk physical edits (for example mass 3 with thickness 1.53) now pass the five-orbit isolation gate. Disk velocities are relaxed in the model's own field, and the gate uses an exact softened potential energy.
+- **No vanishing particles.** Particles no longer vanish during viewport navigation with overlays off.
+- **Correct sphere depth.** Shaded-sphere depth is perspective-correct.
+- **Runtime.** Warp 1.18.0 is the certified runtime; Blender 5.2 LTS is qualified.
 
 ## Verification
 
-See [qualification](docs/QUALIFICATION.md) and [publication provenance](docs/PUBLICATION.md). CPU tests: `python -m pytest -q`; the complete suite requires NumPy, pytest and separately installed Warp 1.15.0. Native scripts under `validation/` require Blender and appropriate hardware. Machine-specific launchers and private historical reports are deliberately excluded from this publication.
+See [qualification](docs/QUALIFICATION.md) and [publication provenance](docs/PUBLICATION.md). The CPU suite is `pip install -e ".[dev]"` and then `python -m pytest -q`; the complete suite also needs a separately installed Warp. Native Blender/GPU probes are in `tests/validation/` and require Blender and suitable hardware. Machine-specific launchers and private historical reports are deliberately excluded from this publication.
 
 ## Reusable packages
 
@@ -21,4 +36,4 @@ CUDA/OpenGL particle drawing (`warp_cuda_gl`), and a hash-pinned dependency inst
 
 ## Licensing
 
-The existing manifest declares `SPDX:LicenseRef-Private-Internal`. Public repository visibility does not grant an open-source license or additional reuse rights. Existing source notices and vendored solver provenance are retained. See `extension/astro_collision_lab/_vendor/VENDOR.md` and `docs/PROVENANCE.json`.
+Since 0.3.0 the add-on is licensed GPL-3.0-or-later (manifest `SPDX:GPL-3.0-or-later`; see `LICENSE`). The packages under `packages/` keep their own licensing terms. Existing source notices and vendored solver provenance are retained; see `extension/astro_collision_lab/_vendor/VENDOR.md` and `docs/PROVENANCE.json`.

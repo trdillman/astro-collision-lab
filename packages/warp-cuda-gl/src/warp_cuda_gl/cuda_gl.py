@@ -13,6 +13,17 @@ import threading
 from contextlib import contextmanager
 
 
+def scene_depth_available(shading_type, show_overlays):
+    """Whether Blender binds real scene depth for a POST_VIEW handler in this view.
+
+    Measured on Blender 5.2 (2026-11-17 viewport depth probe, with an occluding
+    mesh): Solid and Rendered carry mesh depth with overlays on or off, but
+    Material Preview with overlays off binds a depth buffer of all 0.0 under
+    GL_ALWAYS, so depth-testing against it hides every particle.
+    """
+    return not (str(shading_type).upper() == "MATERIAL" and not show_overlays)
+
+
 def current_context_key():
     """Current WGL context handle, or zero on unsupported/no-context surfaces."""
     if os.name != "nt":
@@ -32,16 +43,29 @@ uniform mat4 u_view;
 uniform vec2 u_viewport;
 uniform float u_min_diameter;
 uniform float u_stretch;
+uniform int u_shaded;
 uniform int u_alignment;
 uniform vec3 u_fixed_normal;
 uniform vec3 u_lock_axis;
 out vec2 v_uv;
 out vec4 v_color;
-out vec3 v_center;
-out vec3 v_right;
-out vec3 v_up;
-out vec3 v_normal;
-out float v_radius;
+flat out vec3 v_center;
+flat out vec3 v_right;
+flat out vec3 v_up;
+flat out vec3 v_normal;
+flat out float v_radius;
+flat out mat4 v_inv_vp;
+// Tangent planes of the projected ellipsoid give conservative NDC bounds.
+vec2 projected_bounds(float c, float w, vec3 a, vec3 aw) {
+    float aa=w*w-dot(aw,aw);
+    if (w<=0.0 || aa<=0.0) return vec2(-1,1);
+    float b=c*w-dot(a,aw);
+    vec3 k=w*a-c*aw;
+    float cross_term=dot(a,aw);
+    float disc=dot(k,k)-(dot(a,a)*dot(aw,aw)-cross_term*cross_term);
+    float h=sqrt(max(0.0,disc));
+    return clamp(vec2(b-h,b+h)/aa,vec2(-1),vec2(1));
+}
 vec3 safe_normalize(vec3 v, vec3 fallback) {
     float d = dot(v,v); return d > 1e-12 ? v*inversesqrt(d) : fallback;
 }
@@ -80,6 +104,19 @@ void main() {
         clip.xy += uv * vec2(u_stretch,1) * u_min_diameter/u_viewport * clip.w;
     }
     gl_Position = clip;
+    v_inv_vp=mat4(1);
+    if (u_shaded != 0 && radius>0.0) {
+        vec4 ax=u_vp*vec4(right*radius*u_stretch,0);
+        vec4 ay=u_vp*vec4(up*radius,0);
+        vec4 az=u_vp*vec4(normal*radius,0);
+        vec3 aw=vec3(ax.w,ay.w,az.w);
+        vec2 bx=projected_bounds(center_clip.x,center_clip.w,vec3(ax.x,ay.x,az.x),aw);
+        vec2 by=projected_bounds(center_clip.y,center_clip.w,vec3(ax.y,ay.y,az.y),aw);
+        vec2 ndc=vec2(uv.x<0.0?bx.x:bx.y,uv.y<0.0?by.x:by.y);
+        // Rasterize the complete silhouette; the intersection writes real depth.
+        gl_Position=vec4(ndc,0,1);
+        v_inv_vp=inverse(u_vp);
+    }
     v_uv=uv; v_color=color; v_center=particle.xyz; v_right=right; v_up=up;
     v_normal=normal; v_radius=radius;
 }
@@ -89,29 +126,57 @@ _FRAGMENT = r"""#version 330 core
 uniform mat4 u_vp;
 uniform int u_shaded;
 uniform float u_stretch;
+uniform vec2 u_viewport;
+uniform vec2 u_viewport_origin;
 in vec2 v_uv;
 in vec4 v_color;
-in vec3 v_center;
-in vec3 v_right;
-in vec3 v_up;
-in vec3 v_normal;
-in float v_radius;
+flat in vec3 v_center;
+flat in vec3 v_right;
+flat in vec3 v_up;
+flat in vec3 v_normal;
+flat in float v_radius;
+flat in mat4 v_inv_vp;
 out vec4 frag_color;
 void main() {
     float rr=dot(v_uv,v_uv);
-    if (rr>1.0) discard;
+    bool surface=u_shaded != 0 && v_radius>0.0;
+    if (!surface && rr>1.0) discard;
     gl_FragDepth=gl_FragCoord.z;
     float light=1.0;
     if (u_shaded != 0) {
-        float nz=sqrt(max(0.0,1.0-rr));
-        vec3 n=normalize(vec3(v_uv,nz));
-        light=0.22 + 0.78*max(dot(n,normalize(vec3(-0.4,0.6,1.0))),0.0);
-        if (v_radius>0.0) {
-            vec3 world=v_center+v_radius*(v_right*v_uv.x*u_stretch+v_up*v_uv.y+v_normal*nz);
+        vec3 n;
+        if (surface) {
+            // Use exact pixel centers, not interpolated quad coordinates (the
+            // rasterizer quantizes quad edges to its subpixel grid).
+            vec2 ndc=2.0*(gl_FragCoord.xy-u_viewport_origin)/u_viewport-1.0;
+            vec4 near_point=v_inv_vp*vec4(ndc,-1,1);
+            vec4 mid_point=v_inv_vp*vec4(ndc,0,1);
+            vec3 ray_near=near_point.xyz/near_point.w;
+            vec3 delta=ray_near-v_center;
+            vec3 ray=mid_point.xyz/mid_point.w-ray_near;
+            vec3 radii=v_radius*vec3(u_stretch,1,1);
+            vec3 origin=vec3(dot(delta,v_right),dot(delta,v_up),dot(delta,v_normal))/radii;
+            vec3 direction=normalize(vec3(dot(ray,v_right),dot(ray,v_up),dot(ray,v_normal))/radii);
+            float closest_t=-dot(origin,direction);
+            vec3 closest=origin+closest_t*direction;
+            float height2=1.0-dot(closest,closest);
+            if (height2<0.0) discard;
+            float height=sqrt(height2);
+            float t=closest_t-height;
+            if (t<0.0) t=closest_t+height;
+            if (t<0.0) discard;
+            vec3 hit=origin+t*direction;
+            vec3 world=v_center+v_right*(hit.x*radii.x)+v_up*(hit.y*radii.y)+v_normal*(hit.z*radii.z);
             vec4 clip=u_vp*vec4(world,1);
-            float window_depth=0.5*(clip.z/clip.w)+0.5;
+            float ndc_depth=clip.z/clip.w;
+            if (clip.w<=0.0 || ndc_depth < -1.0 || ndc_depth > 1.0) discard;
+            float window_depth=0.5*ndc_depth+0.5;
             gl_FragDepth=mix(gl_DepthRange.near,gl_DepthRange.far,window_depth);
+            n=normalize(hit/vec3(u_stretch,1,1));
+        } else {
+            n=normalize(vec3(v_uv,sqrt(max(0.0,1.0-rr))));
         }
+        light=0.22 + 0.78*max(dot(n,normalize(vec3(-0.4,0.6,1.0))),0.0);
     }
     frag_color=vec4(v_color.rgb*light,v_color.a);
 }
@@ -245,6 +310,11 @@ class _GL:
 
     def _enabled_indexed(self, enum, index):
         return bool(self._call("glIsEnabledi", C.c_ubyte, (C.c_uint, C.c_uint), enum, index))
+
+    def _float(self, enum):
+        value = C.c_float()
+        self._call("glGetFloatv", None, (C.c_uint, C.POINTER(C.c_float)), enum, C.byref(value))
+        return float(value.value)
 
     def _enable_indexed(self, enum, index, enabled):
         self._call(
@@ -434,6 +504,14 @@ class _GL:
             self._enable(0x0B44, False)
             self._enable(0x0B71, True)
             self._call("glDepthFunc", None, (C.c_uint,), 0x0203)
+            if not options.get("scene_depth", True):
+                # Blender bound no scene depth for this view (see scene_depth_available):
+                # reset it to far so particles still depth-sort against each other.
+                clear_value = self._float(0x0B73)
+                self._call("glDepthMask", None, (C.c_ubyte,), 1)
+                self._call("glClearDepth", None, (C.c_double,), 1.0)
+                self._call("glClear", None, (C.c_uint,), 0x00000100)
+                self._call("glClearDepth", None, (C.c_double,), clear_value)
             blend = options["blend_mode"]
             self._enable_indexed(0x0BE2, 0, blend != "OPAQUE")
             self._call("glDepthMask", None, (C.c_ubyte,), blend == "OPAQUE")
@@ -481,6 +559,10 @@ class _GL:
                 location("u_viewport"),
                 *options["viewport_size"],
             )
+            viewport = (C.c_int * 4)()
+            self._call("glGetIntegerv", None, (C.c_uint, C.POINTER(C.c_int)), 0x0BA2, viewport)
+            self._call("glUniform2f", None, (C.c_int, C.c_float, C.c_float),
+                       location("u_viewport_origin"), viewport[0], viewport[1])
             for name, value in (
                 ("u_fixed_normal", options["fixed_normal"]),
                 ("u_lock_axis", options["lock_axis"]),
@@ -630,6 +712,7 @@ class CudaGLBatch:
         stretch=1.0,
         fixed_normal=(0, 0, 1),
         lock_axis=(0, 0, 1),
+        scene_depth=True,
     ):
         self._check()
         if self._mapped:
@@ -682,6 +765,7 @@ class CudaGLBatch:
                 stretch=stretch,
                 fixed_normal=normal,
                 lock_axis=axis,
+                scene_depth=bool(scene_depth),
             )
             self._draws += 1
 

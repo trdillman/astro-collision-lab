@@ -10,15 +10,15 @@ permissions:
 
 jobs:
   cpu-tests:
-    name: CPU tests (Warp ${{ matrix.warp }})
+    name: CPU tests (${{ matrix.suite }}, Warp ${{ matrix.warp }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - warp: "1.15.0"   # the add-on's pin: full suite
+          - warp: "1.18.0"   # the add-on's pin (since 0.3.0): full suite
             suite: all
-          - warp: "1.18.0"   # astro-unified-sdk's pin: reusable packages only
+          - warp: "1.18.0"   # reusable packages only (astro-unified-sdk pin; same as the add-on since 0.3.0)
             suite: packages
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2

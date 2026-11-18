@@ -1,8 +1,10 @@
 """Strict preflight and content-bound receipt regressions, independent of CUDA."""
-from dataclasses import asdict, replace
 import json
+from dataclasses import asdict, replace
+
 import pytest
-from astro_collision_lab import interaction as contract, preset_specs
+from astro_collision_lab import interaction as contract
+from astro_collision_lab import preset_specs
 from astro_collision_lab.simulation import BodySpec, SimulationConfig
 
 
@@ -12,8 +14,8 @@ def sources():
 
 
 def identity(**changes):
-    args=dict(signature=contract.physical_signature(SimulationConfig(),sources()),
-              code_fingerprint='actual-hash',runtime=('Blender5.1','Warp1.15','CUDA-device0'))
+    args={'signature': contract.physical_signature(SimulationConfig(),sources()),
+              'code_fingerprint': 'actual-hash','runtime': ('Blender5.1','Warp1.18','CUDA-device0')}
     args.update(changes)
     return contract.warmup_identity(**args)
 
@@ -42,7 +44,7 @@ def test_receipt_survives_json_roundtrip_and_binds_all_inputs(tmp_path):
     assert contract.marker_matches(json.loads(path.read_text()),expected)
     assert contract.marker_valid(path,expected)
     for changed in (identity(signature='other-state'),identity(code_fingerprint='edited-code'),
-                    identity(runtime=('Blender5.2','Warp1.15','CUDA-device0'))):
+                    identity(runtime=('Blender5.2','Warp1.18','CUDA-device0'))):
         assert not contract.marker_valid(path,changed)
     for invalid in ({'schema':1,'key':'old','pass':True},dict(marker,**{'pass':1}),
                     dict(marker,**{'pass':False}),dict(marker,schema=999),

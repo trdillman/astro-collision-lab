@@ -1,10 +1,22 @@
 """Run in the isolated installed GUI; public control interruption acceptance."""
-import json, time, traceback
+import argparse
+import importlib
+import json
+import sys
+import time
+import traceback
 from pathlib import Path
-import bpy
-from astro_collision_lab import runtime
 
-REPORT = Path(__file__).resolve().parents[2] / 'interrupted-controls.json'
+import bpy
+
+parser = argparse.ArgumentParser()
+parser.add_argument('--module', default='astro_collision_lab')
+parser.add_argument('--report', default=str(Path(__file__).resolve().parents[3] / 'interrupted-controls.json'))
+args, _ = parser.parse_known_args(sys.argv[sys.argv.index('--') + 1:] if '--' in sys.argv else [])
+runtime = importlib.import_module(args.module + '.runtime')
+authoring = importlib.import_module(args.module + '.authoring')
+REPORT = Path(args.report)
+REPORT.parent.mkdir(parents=True, exist_ok=True)
 state = {'pass': False, 'checks': {}, 'stage': 0}
 started = time.monotonic()
 
@@ -48,7 +60,13 @@ def tick():
         elif stage == 4 and owner.revision >= 5:
             bpy.context.scene.acl_settings.seconds_per_frame *= 1.02
             state['stage'] = 5
-        elif stage == 5 and owner.warming is not None:
+        elif stage == 5 and (owner.warming is not None
+                             or bpy.context.scene.as_pointer() in authoring._RESTARTS):
+            # Kernel receipts key on mode + precision only (since 0.2.2), so a dt
+            # edit rebuilds through the debounced restart queue rather than a warm
+            # worker. Reset inside that window; the stage-6 check proves no stale
+            # restart (begin) fires afterwards.
+            check('Edit accepted and rebuild pending', owner.simulation is None and owner.intent == 'PLAY')
             bpy.ops.acl.reset()
             state['reset_at'] = time.monotonic()
             state['stage'] = 6
@@ -56,7 +74,7 @@ def tick():
             check('Reset during rebuild prevents stale restart', owner.intent == 'STOPPED' and not owner.playing and owner.simulation is None and owner.pending is None)
             finish()
             return None
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - probe timer must record any failure in its report
         finish(traceback.format_exc())
         return None
     return .05

@@ -4,7 +4,6 @@ import json
 from dataclasses import replace
 
 import pytest
-
 from astro_collision_lab import simulation
 from astro_collision_lab.simulation import BodySpec, SimulationConfig
 

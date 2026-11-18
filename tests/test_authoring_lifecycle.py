@@ -4,20 +4,17 @@ The real flush and preview snapshot paths run against small in-memory scenes.
 Only source extraction, Blender services and the simulation owner are replaced.
 """
 
-from dataclasses import replace
 import importlib.util
-from pathlib import Path
 import sys
+from dataclasses import replace
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 # Keep the real numerical runtime outside the temporary module registry below.
-import numpy
 import pytest
-
 from astro_collision_lab.interaction import physical_signature
 from astro_collision_lab.simulation import BodySpec, SimulationConfig
-
 
 PACKAGE = Path(__file__).resolve().parents[1] / "extension" / "astro_collision_lab"
 

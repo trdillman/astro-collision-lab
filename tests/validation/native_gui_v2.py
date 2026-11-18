@@ -1,6 +1,17 @@
 """Installed real-window authoring, undo and pixel-effect controls. No live FPS claim."""
-import argparse,ctypes,hashlib,importlib,json,pathlib,sys,time,traceback
-import bpy,gpu
+import argparse
+import ctypes
+import hashlib
+import importlib
+import json
+import pathlib
+import sys
+import time
+import traceback
+
+import bpy
+import gpu
+
 parser=argparse.ArgumentParser();parser.add_argument('--module',required=True);parser.add_argument('--report',required=True)
 args,_=parser.parse_known_args(sys.argv[sys.argv.index('--')+1:]);report=pathlib.Path(args.report)
 state={'schema':'astro-collision-lab-native-gui-v2','purpose':'Native undo and preview pixel controls; no live solver FPS claim','pass':False,'checks':{},'stage':0,'started':time.monotonic()};handle=None
@@ -61,7 +72,7 @@ def check(name,result):
 
 def flush():
     bpy.context.view_layer.update()
-    for key,(scene,deadline) in list(editor._PENDING.items()):editor._PENDING[key]=(scene,0.)
+    for key,(scene,_deadline) in list(editor._PENDING.items()):editor._PENDING[key]=(scene,0.)
     editor.flush();bpy.context.view_layer.update()
 
 
@@ -70,7 +81,7 @@ def finish(error=None):
     if error:state['error']=error
     if 'editor' in globals():
         try:restore_preview()
-        except Exception:state['restore_error']=traceback.format_exc()
+        except Exception:state['restore_error']=traceback.format_exc()  # noqa: BLE001 - cleanup failure is recorded, not raised
     state['pass']=bool(not error and not state.get('restore_error') and state['checks'] and all(state['checks'].values()))
     report.write_text(json.dumps(state,indent=2,default=str))
     if handle is not None:bpy.types.SpaceView3D.draw_handler_remove(handle,'WINDOW');handle=None
@@ -138,14 +149,14 @@ def draw():
             from bpy_extras.view3d_utils import location_3d_to_region_2d
             xy=location_3d_to_region_2d(bpy.context.region,bpy.context.region_data,state['control_point'])
             check('Known world point projects inside viewport',xy is not None and 3<xy.x<size[0]-3 and 3<xy.y<size[1]-3)
-            x,y=int(round(xy.x)),int(round(xy.y));roi=image[y-3:y+4,x-3:x+4]
+            x,y=round(xy.x),round(xy.y);roi=image[y-3:y+4,x-3:x+4]
             state['projected_control_pixel']=[x,y];state['projected_pixel_rgb']=image[y,x,:3].tolist()
             expected_red=bool(np.any((roi[...,0]-roi[...,1]>.5)&(roi[...,0]-roi[...,2]>.5)))
             check('Float64 authored points render at expected projected position',expected_red)
             restore_preview()
             state['stage']=4
         else:original_draw()
-    except BaseException:
+    except BaseException:  # noqa: BLE001 - probe draw handler records any failure
         state['draw_error']=traceback.format_exc();state['stage']=99
 
 
@@ -172,7 +183,7 @@ def setup():
         check('Duplicate root creates independent components',len(clone.children)==2 and all(c.parent==clone for c in clone.children))
         clone.acl_body.radius=7.;flush()
         check('Duplicate edits preserve original geometry',root.acl_body.radius==original_radius)
-        for obj in list(clone.children)+[clone]:bpy.data.objects.remove(obj,do_unlink=True)
+        for obj in [*list(clone.children), clone]:bpy.data.objects.remove(obj,do_unlink=True)
         root.location=(1.25,-.75,.5);root.rotation_euler=(.2,-.35,.4)
         flush()
         check('Deletion removes clone from source budget',sum(o.acl_body.particle_count for o in importlib.import_module(args.module+'.ui').source_objects(bpy.context.scene))==100000)
@@ -200,7 +211,7 @@ def tick():
         for w in bpy.context.window_manager.windows:
             for a in w.screen.areas:
                 if a.type=='VIEW_3D':a.tag_redraw()
-    except BaseException:finish(traceback.format_exc());return None
+    except BaseException:finish(traceback.format_exc());return None  # noqa: BLE001 - probe timer records any failure
     return .1
 
 bpy.app.timers.register(tick,first_interval=2.)

@@ -22,7 +22,7 @@ from .device_appearance import (
 #: Floats per point in the shared buffer: x, y, z, radius, r, g, b, a, and 4 extra slots.
 STRIDE = 12
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["DEFAULT_RAMP", "MATERIAL_PALETTE", "STRIDE", "Appearance", "CudaGLBatch",
            "DeviceAppearanceWriter", "UnsupportedAppearance", "cuda_gl", "current_context_key",
            "device_appearance"]

@@ -1,9 +1,9 @@
 """Controller contracts without claiming Blender/CUDA runtime acceptance."""
 import importlib
-from pathlib import Path
 import sys
 import types
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -39,7 +39,7 @@ class RuntimeTests(unittest.TestCase):
         # Package attributes can retain a module from a previous isolated import.
         self.r.viewport=self.viewport
         self.scene=Scene();self.context=types.SimpleNamespace(scene=self.scene)
-        from astro_collision_lab.simulation import SimulationConfig,BodySpec
+        from astro_collision_lab.simulation import BodySpec, SimulationConfig
         self.config=SimulationConfig(particle_count=10)
         self.bodies=(BodySpec('A',particle_count=10),)
         self.authored=patch.object(self.r,'authored_scene',return_value=(self.config,self.bodies,()))
@@ -63,7 +63,10 @@ class RuntimeTests(unittest.TestCase):
     def test_start_changes_intent_while_worker_prepares(self):
         self.c.scene=self.scene;self.c.intent='PAUSE';self.c.warming=Mock()
         self.c.pending=(self.scene,self.config,self.bodies,(),False,Path('marker'),Path('owned'))
-        self.r.start(self.context)
+        self.c.request_key='existing-kernel-request'
+        self.c.pending_identity={'runtime': ('test-runtime',)}
+        with patch.object(self.r,'kernel_identity',return_value={'request_id':'existing-kernel-request'}):
+            self.r.start(self.context)
         self.assertEqual(self.c.intent,'PLAY')
         self.assertTrue(self.c.pending[4])
     def test_pause_cancels_step_and_pending_play(self):

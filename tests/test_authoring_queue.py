@@ -1,12 +1,12 @@
 """Exercise production event routing with Blender and runtime boundaries replaced."""
-from contextlib import contextmanager
 import importlib.util
-from pathlib import Path
 import sys
+import threading
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
-import uuid
-import threading
 
 
 @contextmanager
@@ -44,7 +44,7 @@ def test_continuous_drag_cannot_starve_preview_publication():
 
 
 def test_worker_property_updates_only_signal_until_main_thread_drains():
-    with api() as (authoring, calls, clock, _controller):
+    with api() as (authoring, calls, _clock, _controller):
         class ForbiddenRNA:
             def __getattribute__(self, name):
                 raise AssertionError('Worker must not access RNA: ' + name)
@@ -53,7 +53,7 @@ def test_worker_property_updates_only_signal_until_main_thread_drains():
             try:
                 authoring.changed(ForbiddenRNA(), ForbiddenRNA())
                 authoring.appearance_changed()
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - collect any worker-thread failure for the assertion
                 failures.append(exc)
         worker=threading.Thread(target=callback)
         worker.start();worker.join(timeout=2)

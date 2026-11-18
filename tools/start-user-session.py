@@ -1,5 +1,14 @@
 """Create the authoring scene and report fresh, rendered UI readiness."""
-import bpy,importlib,json,os,pathlib,time,traceback,faulthandler
+import faulthandler
+import importlib
+import json
+import os
+import pathlib
+import time
+import traceback
+
+import bpy
+
 _PID=os.getpid();_TOKEN=os.environ.get('ACL_LAUNCH_ID','legacy')
 _CONFIG=pathlib.Path(os.environ['BLENDER_USER_CONFIG'])
 _STATE={'pid':_PID,'launch_id':_TOKEN,'phase':'BOOTSTRAP','ticks':0,'draws':0,'started':time.time()}
@@ -33,7 +42,7 @@ def ready_tick():
             for area in w.screen.areas:
                 if area.type=='VIEW_3D':area.tag_redraw()
         return .2
-    except Exception:
+    except Exception:  # noqa: BLE001 - session timer publishes any failure
         _STATE.update(phase='ERROR',error=traceback.format_exc());publish();faulthandler.cancel_dump_traceback_later();return None
 
 def setup():
@@ -49,11 +58,11 @@ def setup():
             area.spaces.active.show_region_ui=True
             area.spaces.active.region_3d.view_location=(0.,0.,0.)
             area.spaces.active.region_3d.view_distance=35.
-        config,bodies,objects=importlib.import_module('bl_ext.aclv.astro_collision_lab.runtime').authored_scene(bpy.context.scene)
+        config,_bodies,objects=importlib.import_module('bl_ext.aclv.astro_collision_lab.runtime').authored_scene(bpy.context.scene)
         _STATE.update(phase='DRAWING',authored_count=config.particle_count,mode=config.mode,sources=len(objects))
         _HANDLE=bpy.types.SpaceView3D.draw_handler_add(drawn,(),'WINDOW','POST_PIXEL')
         publish();bpy.app.timers.register(ready_tick,first_interval=.2)
-    except Exception:
+    except Exception:  # noqa: BLE001 - session setup publishes any failure
         _STATE.update(phase='ERROR',error=traceback.format_exc());publish();faulthandler.cancel_dump_traceback_later()
     return None
 publish();bpy.app.timers.register(setup,first_interval=.2)

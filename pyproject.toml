@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astro-collision-lab-dev"
+version = "0.3.0"
+description = "Dev tooling for the Astro Collision Lab Blender extension (the shipped add-on is extension/astro_collision_lab)."
+requires-python = ">=3.11"
+license = { text = "GPL-3.0-or-later" }
+
+[project.optional-dependencies]
+# CPU contract tests. Blender and the pinned Warp runtime are separate native gates.
+dev = ["numpy==2.3.5", "pytest==9.1.1", "ruff==0.17.2"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "blender: needs a Blender runtime",
+  "gpu: needs a CUDA GPU",
+  "validation: probe/qualification helpers under tests/validation",
+]
+
+[tool.setuptools]
+packages = []
+
+[tool.ruff]
+target-version = "py311"          # matches requires-python; Blender 5.x bundles Python 3.11
+line-length = 120                 # existing code is hand-wrapped near 100-120; formatter is not enforced
+extend-exclude = ["extension/astro_collision_lab/_vendor"]  # vendored Astro Warp solver code, never edited here
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "BLE", "C4", "RUF"]
+ignore = [
+  "E701",   # compact `if x: stmt` one-liners are the house style across authoring/galaxy_models/dependencies and probes (145 sites); not worth churn
+  "E702",   # compact `a = 1; b = 2` statements, same house style (324 sites)
+  "B905",   # zip() without strict=: lengths are paired by construction; adding strict= changes failure behaviour, so decide per site, not blanket-edit
+  "E501",   # long lines: many pre-existing log/message strings exceed 120; the formatter is not enforced, so wrapping them is churn
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/validation/*" = [
+  "E402",   # probes insert sys.path / bpy setup before importing the package under test
+]

@@ -102,7 +102,7 @@ def _kernels(wp, position_type, velocity_type, size_type, scalar_type):
 
     @wp.func
     def metadata_row(ids: wp.array(dtype=wp.int64), count: int, key: wp.int64) -> int:
-        low = int(0)
+        low = int(0)  # noqa: RUF046 - Warp: the cast makes a mutable dynamic variable
         high = count
         while low < high:
             middle = (low + high) // 2
@@ -110,7 +110,7 @@ def _kernels(wp, position_type, velocity_type, size_type, scalar_type):
                 low = middle + 1
             else:
                 high = middle
-        result = int(-1)
+        result = int(-1)  # noqa: RUF046 - Warp: the cast makes a mutable dynamic variable
         if low < count:
             if ids[low] == key:
                 result = low
@@ -200,7 +200,7 @@ def _kernels(wp, position_type, velocity_type, size_type, scalar_type):
             color = wp.vec4f(0.35, 0.35, 0.35, 1.0)
             if label >= wp.int64(0):
                 color = palette[int(label % wp.int64(10))]
-        row = int(-1)
+        row = int(-1)  # noqa: RUF046 - Warp: the cast makes a mutable dynamic variable
         if have_ids != 0 and meta_count > 0:
             row = metadata_row(meta_ids, meta_count, stable_ids[i])
         if mode == 6:

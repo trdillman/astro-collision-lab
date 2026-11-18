@@ -26,7 +26,7 @@ from .api import (
                   sample,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["IDENTITY", "KINDS", "Component", "Config", "Sample", "assess", "diagnostics",
            "disk_galaxy", "euler_xyz_matrix", "exponential_disk", "from_preset", "galaxy_models",
            "plummer_sphere", "preset", "preset_specs", "preview", "sample"]

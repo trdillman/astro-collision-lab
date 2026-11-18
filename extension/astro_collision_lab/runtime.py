@@ -8,20 +8,28 @@ import dataclasses
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import bpy
 
 from . import viewport
+from .interaction import (
+    code_fingerprint,
+    equilibrium_signature,
+    kernel_identity,
+    marker_valid,
+    physical_signature,
+    resolve_mode,
+    runtime_identity,
+    same_sources,
+    warmup_identity,
+)
 from .simulation import AstroCollisionSimulation, BodySpec, SimulationConfig, validate_scene
-from .interaction import (physical_signature, equilibrium_signature, resolve_mode,
-                          code_fingerprint, marker_valid, warmup_identity,
-                          runtime_identity, same_sources)
 
 
 def authored_scene(scene, *, validate=True):
@@ -68,6 +76,8 @@ def authored_scene(scene, *, validate=True):
         mode=mode, particle_count=count, gravitational_constant=props.gravitational_constant,
         dt=props.seconds_per_frame, softening=props.softening, theta=props.theta,
         substeps=props.substeps if mode=="GALAXY" else 1,seed=props.seed,
+        tree_max_depth=getattr(props, 'tree_max_depth', 16),
+        tree_storage=getattr(props, 'tree_storage', 'STRIDED'),
         bulk_modulus=props.bulk_modulus,shear_modulus=props.shear_modulus,
         yield_stress=props.yield_stress,melt_energy=props.melt_energy,
         specific_internal_energy=props.specific_internal_energy,courant_number=props.courant_number,
@@ -85,11 +95,36 @@ def _signature(config, bodies):
     return physical_signature(config, bodies)
 
 
+def _isolation_status(config, bodies):
+    if config.mode != "GALAXY":
+        return "Preview"
+    import warp as wp
+    identity = warmup_identity(
+        signature=equilibrium_signature(config, bodies),
+        code_fingerprint=code_fingerprint(Path(__file__).parent),
+        runtime=runtime_identity(wp, bpy.app, __package__),
+    )
+    marker = _cache_dir() / (identity["request_id"] + ".isolation-ready.json")
+    if marker_valid(marker, identity):
+        return "Isolation validation passed for this exact model"
+    return "Isolation not validated for this model"
+
+
 def _editor():
     return sys.modules.get(__package__ + ".authoring")
 
 
 _RETIRED_WORKERS = []
+_VALIDATION_JOB = None
+
+
+def _worker_environment(owned):
+    env = os.environ.copy()
+    for key_name in ("CONFIG", "RESOURCES", "EXTENSIONS", "SCRIPTS", "DATAFILES"):
+        path = owned / key_name.lower()
+        path.mkdir()
+        env["BLENDER_USER_" + key_name] = str(path)
+    return env
 
 
 def _retire_worker(process):
@@ -114,6 +149,15 @@ def _reap_workers():
             except ProcessLookupError:
                 pass
     return .1 if _RETIRED_WORKERS else None
+
+
+
+def _warp_compatible(version):
+    """Warp 1.18.0 or later."""
+    try:
+        return tuple(int(x) for x in str(version).split('.')[:3]) >= (1, 18, 0)
+    except ValueError:
+        return False
 
 
 class Controller:
@@ -149,8 +193,8 @@ class Controller:
         import warp as wp
 
         wp.config.kernel_cache_dir = str(_cache_dir())
-        if wp.__version__ != "1.15.0":
-            raise RuntimeError("Install the certified Warp 1.15.0 dependency in the isolated extension environment")
+        if not _warp_compatible(wp.__version__):
+            raise RuntimeError("Install the Warp 1.18.0 or later dependency in the isolated extension environment")
         simulation = AstroCollisionSimulation(config)
         try:
             simulation.initialize(bodies)
@@ -176,7 +220,8 @@ class Controller:
                 self.hidden.append((obj, layer, obj.hide_get(view_layer=layer)))
                 obj.hide_set(True, view_layer=layer)
         self.message = "Live" if play else "Paused"
-        if config.mode=="GALAXY":scene.acl_settings.authoring_status="Validated isolated model"
+        if config.mode == "GALAXY":
+            scene.acl_settings.authoring_status = _isolation_status(config, bodies)
         viewport.attach(self)
 
     def begin(self, context, *, play=True):
@@ -205,8 +250,10 @@ class Controller:
         play = self.intent == "PLAY"
         self.single_step_pending = self.intent == "STEP"
         if self.warming is not None and self.pending is not None:
-            old_scene, old_config, old_bodies, _objects, _play, marker, owned = self.pending
-            if old_scene == scene and _signature(old_config, old_bodies) == signature:
+            old_scene, _old_config, _old_bodies, _objects, _play, marker, owned = self.pending
+            if old_scene == scene and self.request_key == kernel_identity(
+                    config, code_fingerprint=code_fingerprint(Path(__file__).parent),
+                    runtime=self.pending_identity["runtime"])["request_id"]:
                 self.pending = (scene, config, bodies, objects, play, marker, owned)
                 _ensure_timer()
                 return
@@ -234,16 +281,15 @@ class Controller:
         activate(required=True)
         import warp as wp
 
-        if wp.__version__ != "1.15.0":
-            raise RuntimeError("Install the certified Warp 1.15.0 dependency")
+        if not _warp_compatible(wp.__version__):
+            raise RuntimeError("Install the Warp 1.18.0 or later dependency")
         cache = _cache_dir()
         cache.mkdir(parents=True, exist_ok=True)
         package = Path(__file__).parent
         # Hash actual code: a developer edit cannot reuse an old passing receipt
         # merely because the installed build manifest has not been regenerated.
-        identity = warmup_identity(
-            signature=equilibrium_signature(config, bodies) if config.mode == "GALAXY"
-                      else signature,
+        identity = kernel_identity(
+            config,
             code_fingerprint=code_fingerprint(package),
             runtime=runtime_identity(wp, bpy.app, __package__),
         )
@@ -254,35 +300,89 @@ class Controller:
         if marker_valid(marker, identity):
             self._initialize(scene, config, bodies, objects, play)
         else:
+            from .warm_worker import kernel_probe
+            probe_config, probe_bodies = kernel_probe(config.mode)
             owned = Path(tempfile.mkdtemp(prefix="acl-warm-"))
             request = owned / "request.json"
             request.write_text(json.dumps({
-                "config": dataclasses.asdict(config), "bodies": [dataclasses.asdict(b) for b in bodies],
+                "task": "KERNELS",
+                "config": dataclasses.asdict(probe_config),
+                "bodies": [dataclasses.asdict(b) for b in probe_bodies],
                 "package": str(package), "dependency_path": str(Path(wp.__file__).parent.parent),
                 "module_name": __package__, "identity": identity,
                 "cache": str(cache), "marker": str(marker),
             }), encoding="utf-8")
             self.warm_log = (owned / "worker.log").open("w", encoding="utf-8")
-            env = os.environ.copy()
-            for key_name in ("CONFIG", "RESOURCES", "EXTENSIONS", "SCRIPTS", "DATAFILES"):
-                path = owned / key_name.lower()
-                path.mkdir()
-                env["BLENDER_USER_"+key_name] = str(path)
+            env = _worker_environment(owned)
             self.pending = (scene, config, bodies, objects, play, marker, owned)
             try:
                 self.warming = subprocess.Popen(
                     [bpy.app.binary_path, "--background", "--factory-startup", "--python",
                      str(package / "warm_worker.py"), "--", str(request)],
                     env=env, stdout=self.warm_log, stderr=subprocess.STDOUT,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
             except Exception:
                 self.warm_log.close()
                 self.warm_log = None
                 self.pending = None
                 raise
-            self.message = "Preparing equilibrium and CUDA kernels" if config.mode == "GALAXY" else "Preparing CUDA kernels"
+            self.message = "Preparing mode kernels with a 256-particle probe"
             scene.acl_settings.authoring_status = self.message
         _ensure_timer()
+
+    def validate_isolation(self, context):
+        """Run the full five-period engineering gate only on explicit request."""
+        global _VALIDATION_JOB
+        scene = context.scene
+        if _VALIDATION_JOB is not None and _VALIDATION_JOB["process"].poll() is None:
+            raise RuntimeError("An isolation validation is already running")
+        if (self.simulation is not None or self.warming is not None or self.deferred
+                or _RETIRED_WORKERS):
+            raise RuntimeError("Reset/stop the live simulation before validating isolation")
+        config, bodies, _objects = authored_scene(scene)
+        if config.mode != "GALAXY":
+            raise ValueError("Isolation validation applies to Galaxy models only")
+        from .dependencies import activate
+        activate(required=True)
+        import warp as wp
+        if not _warp_compatible(wp.__version__):
+            raise RuntimeError("Install the Warp 1.18.0 or later dependency")
+        package = Path(__file__).parent
+        identity = warmup_identity(
+            signature=equilibrium_signature(config, bodies),
+            code_fingerprint=code_fingerprint(package),
+            runtime=runtime_identity(wp, bpy.app, __package__),
+        )
+        owned = Path(tempfile.mkdtemp(prefix="acl-isolation-"))
+        marker = _cache_dir() / (identity["request_id"] + ".isolation-ready.json")
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        request = owned / "request.json"
+        request.write_text(json.dumps({
+            "task": "VALIDATE_ISOLATION", "config": dataclasses.asdict(config),
+            "bodies": [dataclasses.asdict(body) for body in bodies],
+            "package": str(package), "dependency_path": str(Path(wp.__file__).parent.parent),
+            "module_name": __package__, "identity": identity,
+            "cache": str(_cache_dir()), "marker": str(marker),
+        }), encoding="utf-8")
+        log = (owned / "worker.log").open("w", encoding="utf-8")
+        try:
+            process = subprocess.Popen(
+                [bpy.app.binary_path, "--background", "--factory-startup", "--python",
+                 str(package / "warm_worker.py"), "--", str(request)],
+                env=_worker_environment(owned), stdout=log, stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            log.close()
+            raise
+        _VALIDATION_JOB = {"process": process, "log": log, "owned": owned,
+                           "scene": scene, "config": config, "bodies": bodies,
+                           "marker": marker, "identity": identity}
+        scene.acl_settings.authoring_status = "Isolation validation running on the exact authored model"
+        if not bpy.app.timers.is_registered(_tick_validation):
+            bpy.app.timers.register(_tick_validation, first_interval=.15)
+
 
     def fail(self, error):
         self.error = f"{type(error).__name__}: {error}"
@@ -374,6 +474,51 @@ class Controller:
 controller = Controller()
 
 
+def _tick_validation():
+    global _VALIDATION_JOB
+    job = _VALIDATION_JOB
+    if job is None:
+        return None
+    result = job["process"].poll()
+    if result is None:
+        return .25
+    job["log"].close()
+    scene = job["scene"]
+    try:
+        config, bodies, _objects = authored_scene(scene)
+        current = (config.mode == "GALAXY"
+                   and equilibrium_signature(config, bodies)
+                   == job["identity"]["signature"])
+    except Exception:  # noqa: BLE001 - any authoring failure means the result is not current
+        current = False
+    if not current:
+        scene.acl_settings.authoring_status = "Isolation result stale; current model is not validated"
+    elif result == 0 and marker_valid(job["marker"], job["identity"]):
+        scene.acl_settings.authoring_status = "Isolation validation passed for this exact model"
+    else:
+        from .preparation_result import failure_message
+        reason = failure_message(job["owned"], job["identity"])
+        scene.acl_settings.authoring_status = "Isolation validation failed: " + reason[:350]
+    _VALIDATION_JOB = None
+    viewport.request_redraw()
+    return None
+
+
+def _stop_validation():
+    """Stop only the explicit validation subprocess owned by this add-on."""
+    global _VALIDATION_JOB
+    job, _VALIDATION_JOB = _VALIDATION_JOB, None
+    if job is None:
+        return
+    process = job["process"]
+    if process.poll() is None:
+        _retire_worker(process)
+    try:
+        job["log"].close()
+    except (OSError, ValueError):
+        pass
+
+
 def _tick():
     try:
         editor = _editor()
@@ -400,12 +545,13 @@ def _tick():
                 controller.warm_log = None
             scene, config, bodies, _objects, _play, marker, owned = pending
             controller.pending = None
-            if result != 0 or not marker_valid(marker, controller.pending_identity):
-                raise RuntimeError(f"Preparation failed; see {owned / 'worker.log'}")
             current_config, current_bodies, current_objects = authored_scene(scene)
             if _signature(current_config, current_bodies) != _signature(config, bodies):
                 controller.begin(SimpleNamespace(scene=scene), play=controller.intent == "PLAY")
             else:
+                if result != 0 or not marker_valid(marker, controller.pending_identity):
+                    from .preparation_result import failure_message
+                    raise RuntimeError(failure_message(owned, controller.pending_identity))
                 controller._initialize(scene, current_config, current_bodies, current_objects,
                                        controller.intent == "PLAY")
         elif (controller.playing or controller.single_step_pending) and controller.simulation is not None:
@@ -427,7 +573,7 @@ def _tick():
         if controller.playing or controller.warming is not None or controller.single_step_pending:
             return .001
         return None
-    except Exception as error:
+    except Exception as error:  # noqa: BLE001 - Blender timer must route any failure to controller.fail
         controller.fail(error)
         return None
 
@@ -488,6 +634,9 @@ def step(context):
 def shutdown():
     if bpy.app.timers.is_registered(_tick):
         bpy.app.timers.unregister(_tick)
+    if bpy.app.timers.is_registered(_tick_validation):
+        bpy.app.timers.unregister(_tick_validation)
+    _stop_validation()
     controller.reset()
     viewport.shutdown()
 

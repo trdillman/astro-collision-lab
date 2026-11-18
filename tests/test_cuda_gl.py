@@ -7,6 +7,7 @@ import types
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 
@@ -21,7 +22,7 @@ def load_module():
 
 class FakeGL:
     context = 41
-    devices = [0]
+    devices: ClassVar[list[int]] = [0]
 
     def __init__(self):
         self.calls = []
@@ -300,9 +301,15 @@ class NativeStatusContracts(unittest.TestCase):
                   0x80CA: 1, 0x8009: 0x8006, 0x883D: 0x8006}
         indexed = [dict(blend0), dict(blend1)]
         original = [dict(b) for b in indexed]
+        uniforms = []
 
         def call(name, result, args, *values):
             if name == "glGetIntegerv":
+                if values[0] == 0x0BA2:
+                    pointer = ctypes.cast(values[1], ctypes.POINTER(ctypes.c_int))
+                    for i, value in enumerate((13, 17, 800, 600)):
+                        pointer[i] = value
+                    return
                 ctypes.cast(values[1], ctypes.POINTER(ctypes.c_int))[0] = (
                     indexed[0][values[0]] if values[0] in indexed[0] else state[values[0]])
             elif name == "glGetIntegeri_v":
@@ -330,7 +337,9 @@ class NativeStatusContracts(unittest.TestCase):
                 for b in targets:
                     b.update(zip((0x8009, 0x883D), vals))
             elif name == "glGetUniformLocation":
-                return 0
+                return 99 if values[1] == b"u_viewport_origin" else 0
+            elif name == "glUniform2f":
+                uniforms.append(values)
             elif name == "glDrawArraysInstanced":
                 raise RuntimeError("draw failed")
 
@@ -341,6 +350,7 @@ class NativeStatusContracts(unittest.TestCase):
                     shaded=True, alignment=0, blend_mode="ALPHA",
                     fixed_normal=(0, 0, 1), lock_axis=(0, 0, 1))
         self.assertEqual(indexed, original)
+        self.assertIn((99, 13, 17), uniforms)
 
 
 class Contracts(unittest.TestCase):
@@ -485,6 +495,71 @@ class Contracts(unittest.TestCase):
                 assert ("enable_i", key, 0, value) in calls
             else:
                 assert ("enable", key, value) in calls
+
+    def test_material_preview_without_overlays_has_no_scene_depth(self):
+        # 2026-11-17 GUI probe: Material Preview with overlays off binds a depth
+        # buffer of all 0.0 (GL_ALWAYS), so a LEQUAL test rejected every particle.
+        # Solid/Rendered keep real mesh depth with overlays off; all modes with overlays on.
+        module = load_module()
+        assert module.scene_depth_available("MATERIAL", False) is False
+        for shading in ("SOLID", "WIREFRAME", "MATERIAL", "RENDERED"):
+            assert module.scene_depth_available(shading, True) is True
+        for shading in ("SOLID", "WIREFRAME", "RENDERED"):
+            assert module.scene_depth_available(shading, False) is True
+
+    def _recording_gl(self, module):
+        gl = object.__new__(module._GL)
+        state = {0x8B8D: 91, 0x85B5: 92, 0x8894: 93, 0x0B74: 0x0207, 0x0B72: 1, 0x80C9: 1,
+                 0x80C8: 0, 0x80CB: 1, 0x80CA: 0, 0x8009: 0x8006, 0x883D: 0x8006,
+                 0x935C: 0x8CA1, 0x935D: 0x935F}
+        calls = []
+        gl._integer = lambda enum: state[enum]
+        gl._integer_indexed = lambda enum, index: state[enum]
+        gl._float = lambda enum: {0x0B73: 0.25}[enum]
+        gl._enabled = lambda enum: False
+        gl._enabled_indexed = lambda enum, index: False
+        gl._enable = lambda enum, value: calls.append(("enable", enum, value))
+        gl._enable_indexed = lambda enum, index, value: calls.append(("enable_i", enum, index, value))
+        gl._call = lambda name, result, args, *values: calls.append((name, *values)) or 0
+        return gl, calls
+
+    def _draw_options(self, **extra):
+        identity = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        return dict(view_projection=identity, view_matrix=identity, viewport_size=(800, 600),
+                    min_diameter_px=4.0, stretch=1.0, shaded=True, alignment=0, blend_mode="OPAQUE",
+                    fixed_normal=(0, 0, 1), lock_axis=(0, 0, 1), **extra)
+
+    def test_draw_without_scene_depth_resets_depth_to_far_before_testing(self):
+        module = load_module()
+        gl, calls = self._recording_gl(module)
+        gl.draw(11, 13, 4, **self._draw_options(scene_depth=False))
+        names = [c[0] for c in calls]
+        clear = calls.index(("glClear", 0x00000100))
+        assert ("glClearDepth", 1.0) in calls[:clear]
+        assert ("glDepthMask", 1) in calls[:clear]
+        assert names.index("glDrawArraysInstanced") > clear
+        assert ("enable", 0x0B71, True) in calls and ("glDepthFunc", 0x0203) in calls
+        assert calls[clear + 1:].count(("glClearDepth", 0.25)) == 1, "Blender's clear value restored"
+        assert ("glDepthFunc", 0x0207) == calls[[i for i, c in enumerate(calls) if c[0] == "glDepthFunc"][-1]]
+
+    def test_draw_with_scene_depth_never_clears_blender_depth(self):
+        module = load_module()
+        for extra in ({}, {"scene_depth": True}):
+            gl, calls = self._recording_gl(module)
+            gl.draw(11, 13, 4, **self._draw_options(**extra))
+            assert not [c for c in calls if c[0] in ("glClear", "glClearDepth")]
+
+    def test_batch_forwards_scene_depth_to_native_draw(self):
+        rig = DriverRig()
+        batch = rig.batch()
+        seen = []
+        batch._gl.draw = lambda *a, **kw: seen.append(kw.get("scene_depth"))
+        identity = (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        for value in (False, True):
+            batch.draw(1, view_projection=identity, view_matrix=identity, viewport_size=(8, 8),
+                       scene_depth=value)
+        batch.draw(1, view_projection=identity, view_matrix=identity, viewport_size=(8, 8))
+        assert seen == [False, True, True]
 
     def test_partial_map_failure_attempts_unmap_and_preserves_error(self):
         rig = DriverRig()

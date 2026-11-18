@@ -61,8 +61,8 @@ def _environment(module_name, repo_root, report_dir, warp_cache_dir):
     wp = importlib.import_module("warp")
     wp.config.kernel_cache_dir = str(paths.warp_cache_dir)
     wp.init()
-    if wp.__version__ != "1.15.0":
-        raise RuntimeError("probe requires the packaged Warp 1.15.0")
+    if tuple(int(x) for x in wp.__version__.split(".")[:3]) < (1, 18, 0):
+        raise RuntimeError("probe requires the Warp 1.18.0 or later")
     return module, wp, paths
 
 
@@ -127,7 +127,7 @@ def _draw():
             deleted = 0
             for _ in range(20):
                 trial = renderer.CudaGLBatch("cuda:0", 1)
-                trial.update(lambda out: wp.launch(
+                trial.update(lambda out, trial=trial: wp.launch(
                     _kernel(wp), dim=1, inputs=[out, 0.0, 0.0], device=trial.device
                 ))
                 name, gl = trial.vbo, trial._gl
@@ -151,7 +151,7 @@ def _draw():
                    view_matrix=_matrix(rv3d.view_matrix),
                    viewport_size=(region.width, region.height), shaded=True)
         s["draws"] += 1
-    except Exception:
+    except Exception:  # noqa: BLE001 - probe draw handler records any failure
         s["error"] = traceback.format_exc()
 
 
@@ -282,7 +282,7 @@ def _tick():
             s["cube"].hide_set(next_phase not in ("behind", "front"))
         s["view"][1].tag_redraw()
         return 0.25
-    except Exception:
+    except Exception:  # noqa: BLE001 - probe timer records any failure
         s["error"] = traceback.format_exc()
         if "paths" not in s:
             s["paths"] = resolve_probe_paths(
@@ -298,10 +298,10 @@ def schedule_gui_run(*, module_name, repo_root, report_dir, warp_cache_dir):
 
     _STATE.clear()
     _STATE.update(
-        args=dict(module_name=module_name, repo_root=repo_root, report_dir=report_dir,
-                  warp_cache_dir=warp_cache_dir), begin=time.monotonic(), draws=0,
-        report=dict(schema="astro-collision-lab-cuda-gl-pixels-v1", pixels={}, forbidden_transfers=0,
-                    generated_at_utc=datetime.now(UTC).isoformat(),
-                    scope="owned viewport interop; CPU simulation history is outside this probe"),
+        args={"module_name": module_name, "repo_root": repo_root, "report_dir": report_dir,
+                  "warp_cache_dir": warp_cache_dir}, begin=time.monotonic(), draws=0,
+        report={"schema": "astro-collision-lab-cuda-gl-pixels-v1", "pixels": {}, "forbidden_transfers": 0,
+                    "generated_at_utc": datetime.now(UTC).isoformat(),
+                    "scope": "owned viewport interop; CPU simulation history is outside this probe"},
     )
     bpy.app.timers.register(_tick, first_interval=2.0)

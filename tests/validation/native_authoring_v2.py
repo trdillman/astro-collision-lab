@@ -1,17 +1,22 @@
 """Native RNA acceptance for new object catalogue. No physics/performance claim."""
-import sys,json,time,traceback
+import json
+import sys
+import traceback
 from pathlib import Path
+
 import bpy
-root=Path(__file__).resolve().parents[1]
+
+root=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(root/'extension'))
 import astro_collision_lab as addon
-from astro_collision_lab import ui,authoring,runtime
+from astro_collision_lab import authoring, runtime, ui
+
 report={'pass':False,'checks':[]}
 def check(name,value):
     assert value,name
     report['checks'].append(name)
 def flush():
-    for key,(scene,deadline) in list(authoring._PENDING.items()):authoring._PENDING[key]=(scene,0.)
+    for key,(scene,_deadline) in list(authoring._PENDING.items()):authoring._PENDING[key]=(scene,0.)
     authoring.flush();bpy.context.view_layer.update()
 try:
     addon.register()
@@ -42,7 +47,7 @@ try:
     roots=[o for o in scene.objects if o.acl_body.is_galaxy and o.name in ('Galaxy A','Galaxy B')]
     check('Demo compound sources',len(roots)==2 and all(len(o.children)==2 for o in roots))
     cfg,bodies,objects=runtime.authored_scene(scene)
-    check('Demo 2 groups',len(set(b.galaxy_id for b in bodies))==2)
+    check('Demo 2 groups',len({b.galaxy_id for b in bodies})==2)
     import dataclasses
     (root/'status'/'native-galaxy-snapshot-v2.json').write_text(json.dumps({'config':dataclasses.asdict(cfg),'bodies':[dataclasses.asdict(b) for b in bodies]}))
     bpy.ops.acl.moon_preset();flush()
@@ -54,7 +59,7 @@ try:
     check('Save reopen sources',sum(o.acl_body.particle_count for o in ui.source_objects(bpy.context.scene))==100000)
     addon.unregister();check('Clean unregister',not hasattr(bpy.types.Object,'acl_body'))
     report['pass']=True
-except Exception:
+except Exception:  # noqa: BLE001 - probe records any failure in its report
     report['error']=traceback.format_exc()
 finally:
     (root/'status'/'native-authoring-v2.json').write_text(json.dumps(report,indent=2))

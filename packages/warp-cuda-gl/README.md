@@ -16,7 +16,7 @@ Two parts:
 
 ## Requirements
 
-- Python 3.11+, NumPy, and NVIDIA Warp (the GPU path is proven with `warp-lang==1.15.0`; the CPU tests also pass on 1.18.0, the astro-unified-sdk pin).
+- Python 3.11+, NumPy, and NVIDIA Warp (the GPU path is proven with `warp-lang==1.18.0`, the add-on's pin since 0.3.0, and earlier with 1.15.0).
 - For drawing: Windows, an NVIDIA GPU, and a current OpenGL 4.5 context (or 4.0+ with
   `GL_ARB_clip_control`) on the calling thread, on the same GPU as the Warp device. (Blender's viewport draw callback is one.)
 - Importing the package is safe anywhere. The appearance writer can run on Warp's CPU device

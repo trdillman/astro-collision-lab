@@ -1,19 +1,20 @@
 """Completed GPU solver diagnostic, NOT live viewport acceptance.
 
-Example: python validation/solver_probe.py --mode IMPACT --count 100000 --frames 120
+Example: python tests/validation/solver_probe.py --mode IMPACT --count 100000 --frames 120
 Full particle readbacks occur only before/after measured stepping for validation.
 """
 from __future__ import annotations
+
 import argparse
 import dataclasses
 import importlib.util
 import json
 import math
-from pathlib import Path
 import sys
 import time
+from pathlib import Path
 
-ROOT=Path(__file__).resolve().parents[1]
+ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT / "extension"))
 sys.path.insert(0,str(ROOT))
 
@@ -36,7 +37,7 @@ def _rotation(euler):
 
 def probe_scene(mode,count,dt=None):
     """Same authored presets, largest-remainder count scaling with no idle slots."""
-    from astro_collision_lab.simulation import BodySpec,SimulationConfig
+    from astro_collision_lab.simulation import BodySpec, SimulationConfig
     mode=mode.upper();presets=_presets()
     recipe=presets.galaxy_collision() if mode=='GALAXY' else presets.moon_collision()
     if count<len(recipe.bodies):raise ValueError('count must allocate at least one particle per source')
@@ -166,7 +167,7 @@ def main(argv=None):
     parser.add_argument('--dt',type=float,default=None)
     parser.add_argument('--output',type=Path,default=None)
     args=parser.parse_args(argv)
-    output=args.output or ROOT/'validation'/'reports'/f'solver_{args.mode.lower()}_{args.count}.json'
+    output=args.output or ROOT/'.local'/'evidence'/'solver'/f'solver_{args.mode.lower()}_{args.count}.json'
     report={'schema':2,'mode':args.mode,'requested_count':args.count,'live_viewport_acceptance':False}
     sim=None
     try:
@@ -185,13 +186,13 @@ def main(argv=None):
         report['device']=str(sim.device_context.device_name)
         report['success']=bool(report['finite'] and report['solver_guardrails_pass'] is True and report['active_count']==args.count and
             report['motion']['moving_particles']>0 and all(dt>0 for dt in report['physical_dt_per_frame']))
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - probe records any failure in its report
         import traceback
         report.update(success=False,error=f'{type(exc).__name__}: {exc}',traceback=traceback.format_exc())
     finally:
         if sim is not None:
             try:sim.close()
-            except Exception as exc:report.update(success=False,close_error=str(exc))
+            except Exception as exc:report.update(success=False,close_error=str(exc))  # noqa: BLE001 - record any close failure in the report
         output.parent.mkdir(parents=True,exist_ok=True)
         def json_finite(value):
             if isinstance(value,float) and not math.isfinite(value):return None

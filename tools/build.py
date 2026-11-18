@@ -9,8 +9,8 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-WHEEL_NAME = "warp_lang-1.15.0-py3-none-win_amd64.whl"
-WHEEL_SHA = "06ef42c3ce522749268056653ea253645eb4a96ca164af74ae5113f0d55a6970"
+WHEEL_NAME = "warp_lang-1.18.0-py3-none-win_amd64.whl"
+WHEEL_SHA = "1769e55746739f2e244a2b412123003c462ec3d977dfb5f420f924a8553d30aa"
 
 
 def digest(path):
@@ -26,7 +26,7 @@ def build(wheel=None):
     stage = ROOT / "build" / "astro_collision_lab"
     if stage.exists():
         shutil.rmtree(stage)
-    shutil.copytree(source, stage, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "wheels", "*.whl", "*.dll", "*.pyd", "_build.json"))
+    shutil.copytree(source, stage, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "wheels", "*.whl", "*.dll", "*.pyd", "*.patch", "_build.json"))
     version = tomllib.loads((stage / "blender_manifest.toml").read_text(encoding="utf-8"))["version"]
     sources = {
         p.relative_to(stage).as_posix(): digest(p)

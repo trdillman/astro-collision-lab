@@ -3,13 +3,15 @@
 Only initial-condition previews upload CPU vertices. Live simulation continues
 through viewport.py's CUDA/GL path. No handler mutates the user's active context.
 """
-import time
 import threading
+import time
 from types import SimpleNamespace
+
 import bpy
+
 from . import ui
-from .preset_specs import BodySpec as Recipe
 from .interaction import same_sources
+from .preset_specs import BodySpec as Recipe
 
 _PENDING={}
 _SIGNATURES={}
@@ -254,8 +256,8 @@ def synchronize(scene):
 def accept_snapshot(scene, config, bodies, objects, *, preserve_restart=False):
     """Retain local preview geometry; native transforms change draw matrices."""
     global _HANDLE, _PREVIEW_CACHE
-    from .runtime import _signature
     from .preview_cache import PreviewCache
+    from .runtime import _signature
     if _PREVIEW_CACHE is None:
         _PREVIEW_CACHE = PreviewCache()
     pointer = scene.as_pointer()
@@ -265,8 +267,8 @@ def accept_snapshot(scene, config, bodies, objects, *, preserve_restart=False):
         key, points = _PREVIEW_CACHE.sample(body, config)
         old = previous.get(obj.as_pointer())
         batch = old['batch'] if old is not None and old['key'] == key else None
-        entries[obj.as_pointer()] = dict(obj=obj, key=key, points=points, batch=batch,
-                                        rotation=body.rotation, position=body.position)
+        entries[obj.as_pointer()] = {'obj': obj, 'key': key, 'points': points, 'batch': batch,
+                                        'rotation': body.rotation, 'position': body.position}
     _PREVIEWS[pointer] = entries
     _SIGNATURES[pointer] = _signature(config, bodies)
     _PENDING.pop(pointer, None)
@@ -282,7 +284,7 @@ def flush():
         return .03
     _BUSY = True
     try:
-        from .runtime import authored_scene, _signature, controller
+        from .runtime import _signature, authored_scene, controller
         for pointer, (scene, deadline) in list(_PENDING.items()):
             if time.monotonic() < deadline:
                 continue
@@ -310,11 +312,11 @@ def flush():
                 if owned and (controller.signature != signature or replaced):
                     controller.reset(preserve_intent=True)
                 accept_snapshot(scene, config, bodies, objects)
-                scene.acl_settings.authoring_status = 'Preview - equilibrium not validated' if config.mode == 'GALAXY' else 'Preview'
+                scene.acl_settings.authoring_status = 'Preview - Galaxy isolation not validated for this model' if config.mode == 'GALAXY' else 'Preview'
                 if owned and controller.intent != 'STOPPED':
                     _RESTARTS[pointer] = (scene, time.monotonic() + .35)
                     controller.message = 'Preview; waiting for edits to settle'
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - surface any invalid-settings error in authoring status
                 try:
                     scene.acl_settings.authoring_status = 'Invalid settings: ' + str(exc)
                 except ReferenceError:
@@ -334,7 +336,7 @@ def flush():
                 continue
             try:
                 controller.begin(SimpleNamespace(scene=scene), play=controller.intent == 'PLAY')
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - surface any restart error to the controller UI
                 controller.reset(preserve_intent=True)
                 controller.error = str(exc)
                 controller.message = 'Invalid settings: ' + str(exc)
@@ -370,8 +372,8 @@ def draw():
         return
     import gpu
     import numpy as np
-    from mathutils import Matrix
     from gpu_extras.batch import batch_for_shader
+    from mathutils import Matrix
     shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     old_blend = gpu.state.blend_get()
     old_depth = gpu.state.depth_test_get()
