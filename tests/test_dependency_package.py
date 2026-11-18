@@ -46,3 +46,19 @@ def test_manifest_permission_reasons_fit_blender_limit():
     manifest=tomllib.loads((root/'extension/astro_collision_lab/blender_manifest.toml').read_text(encoding='utf-8'))
     for key, reason in manifest['permissions'].items():
         assert len(reason)<=64, (key, len(reason))
+
+
+def test_build_rejects_crlf_sources(tmp_path):
+    # extension/** is eol=lf; a stale CRLF working copy changes the runtime
+    # fingerprint and ZIP bytes, so the build must refuse it rather than ship it.
+    import shutil
+    root=Path(__file__).resolve().parents[1]
+    spec=importlib.util.spec_from_file_location('acl_build_crlf',root/'tools/build.py')
+    mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+    shutil.copytree(root/'extension',tmp_path/'extension')
+    target=tmp_path/'extension/astro_collision_lab/compact_tree.py'
+    target.write_bytes(target.read_bytes().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'))
+    mod.ROOT=tmp_path
+    with pytest.raises(ValueError,match=r'compact_tree\.py'):
+        mod.build()
+    assert not (tmp_path/'artifacts').exists()

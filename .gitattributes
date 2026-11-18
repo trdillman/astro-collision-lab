@@ -2,3 +2,5 @@
 extension/** text eol=lf
 # Preserve vendor delta patch byte for byte.
 extension/**/_vendor/*.patch -text
+# Package copies must stay byte-identical to the add-on (tools/sync_packages.py).
+packages/** text eol=lf

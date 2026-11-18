@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 WHEEL_NAME = "warp_lang-1.18.0-py3-none-win_amd64.whl"
 WHEEL_SHA = "1769e55746739f2e244a2b412123003c462ec3d977dfb5f420f924a8553d30aa"
+TEXT_SUFFIXES = {".py", ".toml", ".md", ".json", ".txt", ".typed", ""}
 
 
 def digest(path):
@@ -27,6 +28,13 @@ def build(wheel=None):
     if stage.exists():
         shutil.rmtree(stage)
     shutil.copytree(source, stage, ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "wheels", "*.whl", "*.dll", "*.pyd", "*.patch", "_build.json"))
+    # .gitattributes stores extension/** as LF. A stale CRLF working copy would
+    # silently change the runtime fingerprint and ZIP bytes, so refuse it.
+    crlf = sorted(p.relative_to(stage).as_posix() for p in stage.rglob("*")
+                  if p.is_file() and p.suffix in TEXT_SUFFIXES and b"\r" in p.read_bytes())
+    if crlf:
+        raise ValueError("CRLF line endings in extension sources (re-checkout with "
+                         "`git checkout -- extension` after fixing eol): " + ", ".join(crlf))
     version = tomllib.loads((stage / "blender_manifest.toml").read_text(encoding="utf-8"))["version"]
     sources = {
         p.relative_to(stage).as_posix(): digest(p)
