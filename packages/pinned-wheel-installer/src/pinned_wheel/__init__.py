@@ -55,7 +55,10 @@ def verify_archive(data: bytes, sha256: str) -> zipfile.ZipFile:
     if hashlib.sha256(data).hexdigest() != sha256.lower():
         raise WheelError("wheel hash mismatch")
     archive = zipfile.ZipFile(io.BytesIO(data))
-    for name in archive.namelist():
+    for info in archive.infolist():
+        # orig_filename is the name as stored; on Windows zipfile already turned
+        # "\\" into "/" in .filename, which would hide a hostile backslash.
+        name = info.orig_filename
         path = pathlib.PurePosixPath(name)
         if path.is_absolute() or ".." in path.parts or "\\" in name or ":" in name:
             raise WheelError("unsafe archive entry: " + name)

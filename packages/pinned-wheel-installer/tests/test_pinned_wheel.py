@@ -13,7 +13,11 @@ def make_wheel(entries):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as z:
         for name, text in entries.items():
-            z.writestr(name, text)
+            # ZipInfo turns os.sep into "/" on Windows; restore the exact name so
+            # a hostile backslash entry is really written on every OS.
+            info = zipfile.ZipInfo(name)
+            info.filename = name
+            z.writestr(info, text)
     data = buffer.getvalue()
     return data, hashlib.sha256(data).hexdigest()
 
@@ -59,6 +63,7 @@ def test_hash_mismatch_rejected():
 @pytest.mark.parametrize("name", ["../evil.py", "/abs.py", "a\\b.py", "C:evil.py"])
 def test_unsafe_entries_rejected(name):
     data, sha = make_wheel({name: "x"})
+    assert name.encode() in data  # the hostile name is really in the archive
     with pytest.raises(pw.WheelError, match="unsafe"):
         pw.verify_archive(data, sha)
 
