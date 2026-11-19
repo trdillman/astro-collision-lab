@@ -39,29 +39,34 @@ def record_walk(runtime, prepare_slots, fill_nodes, mapping, output):
         ],
         device=device,
     )
-    wp.launch(
-        kernels.total_walk_chunks,
-        dim=runtime._walk_chunks,
-        inputs=[
-            arrays["walk_node_counts"],
-            count,
-            runtime._walk_chunk,
-            arrays["walk_chunk_totals"],
-        ],
-        device=device,
-    )
-    wp.launch(
-        kernels.offset_walk_slots,
-        dim=runtime._walk_chunks,
-        inputs=[
-            arrays["walk_node_counts"],
-            count,
-            runtime._walk_chunk,
-            arrays["walk_chunk_totals"],
-            arrays["walk_offsets"],
-        ],
-        device=device,
-    )
+    if wp.get_device(device).is_cuda:
+        # The zero-initialized leading offset stays zero. Scanning into the
+        # remaining slots writes every exclusive offset and the final total.
+        wp.utils.array_scan(arrays["walk_node_counts"], arrays["walk_offsets"][1:], inclusive=True)
+    else:
+        wp.launch(
+            kernels.total_walk_chunks,
+            dim=runtime._walk_chunks,
+            inputs=[
+                arrays["walk_node_counts"],
+                count,
+                runtime._walk_chunk,
+                arrays["walk_chunk_totals"],
+            ],
+            device=device,
+        )
+        wp.launch(
+            kernels.offset_walk_slots,
+            dim=runtime._walk_chunks,
+            inputs=[
+                arrays["walk_node_counts"],
+                count,
+                runtime._walk_chunk,
+                arrays["walk_chunk_totals"],
+                arrays["walk_offsets"],
+            ],
+            device=device,
+        )
     wp.launch(
         fill_nodes,
         dim=count,
