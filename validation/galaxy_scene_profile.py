@@ -59,9 +59,17 @@ def tick():
         if any(r["active_count"] != state["config"]["particle_count"] or
                r["displayed_count"] != r["active_count"] for r in rows):
             raise ValueError("Presented count does not match authored particle budget")
+        if [r["revision"] for r in rows] != list(range(1, len(rows) + 1)):
+            raise ValueError("Expected consecutive rendered revisions starting at 1")
+        # Revision zero is drawn before stepping, but is not itself a measurement row.
+        # The first row's interval covers revisions zero through one.
+        first_draw = (owner.last_presented - started -
+                      sum(r["frame_interval_ms"] for r in rows) / 1000)
         state.update(rows=rows[:140], viewport=owner.status()["viewport"],
-                     start_to_first_draw_s=owner.last_presented - started -
-                     sum(r["frame_interval_ms"] for r in rows[1:]) / 1000)
+                     start_to_first_draw_s=first_draw,
+                     start_to_first_advanced_draw_s=first_draw + rows[0]["frame_interval_ms"] / 1000,
+                     start_through_draw_140_s=first_draw +
+                     sum(r["frame_interval_ms"] for r in rows[:140]) / 1000)
     except Exception:
         state["error"] = traceback.format_exc()
     finally:
