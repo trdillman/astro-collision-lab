@@ -251,7 +251,7 @@ def synchronize(scene):
         _BUSY = was_busy
 
 
-def accept_snapshot(scene, config, bodies, objects, *, preserve_restart=False):
+def accept_snapshot(scene, config, bodies, objects, *, preserve_restart=False, defer_preview=False):
     """Retain local preview geometry; native transforms change draw matrices."""
     global _HANDLE, _PREVIEW_CACHE
     from .runtime import _signature
@@ -262,11 +262,17 @@ def accept_snapshot(scene, config, bodies, objects, *, preserve_restart=False):
     previous = _PREVIEWS.get(pointer, {})
     entries = {}
     for obj, body in zip(objects, bodies):
-        key, points = _PREVIEW_CACHE.sample(body, config)
         old = previous.get(obj.as_pointer())
-        batch = old['batch'] if old is not None and old['key'] == key else None
+        key = _PREVIEW_CACHE.geometry_key(body, config)
+        reuse = old is not None and old['key'] == key
+        batch = old['batch'] if reuse else None
+        points = old['points'] if reuse else None
+        if points is None and not defer_preview:
+            _, points = _PREVIEW_CACHE.sample(body, config)
         entries[obj.as_pointer()] = dict(obj=obj, key=key, points=points, batch=batch,
                                         rotation=body.rotation, position=body.position)
+        if points is None:
+            entries[obj.as_pointer()]['sample'] = (body, config)
     _PREVIEWS[pointer] = entries
     _SIGNATURES[pointer] = _signature(config, bodies)
     _PENDING.pop(pointer, None)
@@ -303,7 +309,8 @@ def flush():
                 replaced = (owned and controller.simulation is not None
                             and not same_sources(controller.sources, objects))
                 if _SIGNATURES.get(pointer) == signature and not replaced:
-                    accept_snapshot(scene, config, bodies, objects, preserve_restart=True)
+                    accept_snapshot(scene, config, bodies, objects, preserve_restart=True,
+                                    defer_preview=owned and controller.simulation is not None)
                     if controller.scene == scene:
                         controller.sources = tuple(objects)
                     continue
@@ -386,6 +393,9 @@ def draw():
             if obj.name not in scene.objects or not obj.visible_get():
                 continue
             if entry['batch'] is None:
+                if entry['points'] is None:
+                    _, entry['points'] = _PREVIEW_CACHE.sample(*entry['sample'])
+                    del entry['sample']
                 entry['batch'] = batch_for_shader(shader, 'POINTS', {'pos': np.ascontiguousarray(entry['points'], dtype=np.float32)})
             transform = Matrix(entry['rotation']).to_4x4()
             transform.translation = entry['position']

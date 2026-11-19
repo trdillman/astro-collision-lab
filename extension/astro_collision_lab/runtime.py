@@ -243,7 +243,9 @@ class Controller:
             raise
         signature = _signature(config, bodies)
         if editor is not None:
-            editor.accept_snapshot(scene, config, bodies, objects)
+            # The live viewport takes over after Start. Build missing preview
+            # points only if the authoring viewport actually draws them.
+            editor.accept_snapshot(scene, config, bodies, objects, defer_preview=True)
         play = self.intent == "PLAY"
         self.single_step_pending = self.intent == "STEP"
         if self.warming is not None and self.pending is not None:

@@ -160,6 +160,24 @@ def test_replaced_sources_refresh_preview_and_rebuild_owned_physics(lifecycle, c
     env.controller.begin.assert_not_called()
 
 
+def test_start_snapshot_defers_new_geometry_and_preview_refresh_restores_full_points(lifecycle):
+    env = lifecycle
+    config, bodies, objects = env.scene.snapshot
+    resized = (replace(bodies[0], radius=bodies[0].radius * 2),)
+    env.authoring.accept_snapshot(env.scene, config, resized, objects, defer_preview=True)
+    entries = env.authoring._PREVIEWS[env.scene.as_pointer()]
+    entry = entries[env.source.as_pointer()]
+    assert entry["points"] is None
+    assert entry["batch"] is None
+    assert entry["sample"] == (resized[0], config)
+
+    env.authoring.accept_snapshot(env.scene, config, resized, objects)
+    restored = env.authoring._PREVIEWS[env.scene.as_pointer()][env.source.as_pointer()]
+    assert restored["key"] == entry["key"]
+    assert restored["points"].shape == (resized[0].particle_count, 3)
+    assert "sample" not in restored
+
+
 def test_equal_physics_refresh_preserves_pending_rebuild_deadline_and_cached_batch(lifecycle):
     env = lifecycle
     env.controller.scene = env.scene

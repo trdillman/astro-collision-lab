@@ -22,8 +22,9 @@ class PreviewCache:
         self.limit = limit
         self._entries = OrderedDict()
 
-    def sample(self, body, config):
-        """Return ``(geometry_key, local_points)``; cached points are read-only.
+    @staticmethod
+    def geometry_key(body, config):
+        """Identify preview geometry without sampling any points.
 
         Names, membership, motion, equilibrium support, and appearance do not
         affect the fixed preview density geometry. All authored particles are
@@ -38,7 +39,12 @@ class PreviewCache:
             encoded = json.dumps(geometry, allow_nan=False, separators=(',', ':'))
         except (ValueError, TypeError) as exc:
             raise ValueError('preview geometry parameters must be finite and serializable') from exc
-        key = hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+        return hashlib.sha256(encoded.encode('utf-8')).hexdigest()
+
+    def sample(self, body, config):
+        """Return the geometry key and full-count read-only local points."""
+        key = self.geometry_key(body, config)
+        count = body.particle_count
         if key in self._entries:
             self._entries.move_to_end(key)
             return key, self._entries[key]
