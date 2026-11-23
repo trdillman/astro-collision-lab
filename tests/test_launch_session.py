@@ -1,6 +1,10 @@
 import importlib.util
+import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 
 
 def api():
@@ -10,6 +14,59 @@ def api():
 
 
 def valid():return {'pid':12,'launch_id':'new','phase':'READY','ticks':5,'draws':3,'authored_count':100000,'preview_count':100000}
+
+
+def configure_launch(monkeypatch, profile):
+    monkeypatch.setattr(sys, 'argv', [
+        'launch-session.py', '--blender', 'blender.exe', '--profile', str(profile),
+        '--bootstrap', 'startup.py',
+    ])
+    (profile / 'config').mkdir()
+
+
+def test_cli_reuses_responsive_project_process(monkeypatch, tmp_path):
+    launcher = api()
+    configure_launch(monkeypatch, tmp_path)
+    record = {'pid': 12, 'launch_id': 'new', 'identity': 'existing-process'}
+    session = tmp_path / 'session.json'
+    session.write_text(json.dumps(record), encoding='utf-8')
+    ready = tmp_path / 'config' / 'session-12.json'
+    ready.write_text(json.dumps(valid()), encoding='utf-8')
+    monkeypatch.setattr(launcher, 'process_identity', lambda pid: 'existing-process')
+    focused = []
+
+    def focus(pid, focus=False):
+        focused.append((pid, focus))
+        return True
+
+    monkeypatch.setattr(launcher, 'window_state', focus)
+    monkeypatch.setattr(launcher, 'spawn', lambda *args: pytest.fail('launched a duplicate'))
+    launcher.main()
+
+    assert focused == [(12, True)]
+    assert json.loads(session.read_text(encoding='utf-8')) == record
+
+
+def test_cli_closes_failed_launch_it_owns(monkeypatch, tmp_path):
+    launcher = api()
+    configure_launch(monkeypatch, tmp_path)
+    cleanup = []
+    child = SimpleNamespace(
+        pid=12,
+        poll=lambda: None,
+        kill=lambda: cleanup.append('kill'),
+        wait=lambda timeout: cleanup.append(('wait', timeout)),
+    )
+    monkeypatch.setattr(launcher, 'spawn', lambda *args: child)
+    monkeypatch.setattr(launcher, 'process_identity', lambda pid: 'started-process')
+    monkeypatch.setattr(launcher, 'await_ready', lambda *args: False)
+
+    with pytest.raises(RuntimeError, match='the failed launch was closed'):
+        launcher.main()
+
+    result = json.loads((tmp_path / 'startup-result.json').read_text(encoding='utf-8'))
+    assert result['window_responding'] is False
+    assert cleanup == ['kill', ('wait', 10)]
 
 
 def test_previous_launch_cannot_validate_reopened_window():
